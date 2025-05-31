@@ -11,7 +11,7 @@ from deezspot.libutils.logging_utils import configure_logger, logger
 from deezspot.deezloader import DeeLogin
 from deezspot.models import Track, Album, Playlist, Smart, Episode
 
-__version__ = "1.0.1"
+__version__ = "1.2.0"
 
 # Configure default logging (silent by default)
 configure_logger(level=logging.WARNING, to_console=False)

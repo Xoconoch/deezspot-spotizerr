@@ -5,9 +5,9 @@ readmed = README.read()
 README.close()
 
 setup(
-	name = "deezspot",
-	version = "1.1",
-	description = "Downloads songs, albums or playlists from deezer and spotify (clone from https://pypi.org/project/deezloader/)",
+	name = "deezspot-spotizerr",
+	version = "1.2.0",
+	description = "Spotizerr's implementation of deezspot",
 	long_description = readmed,
 	long_description_content_type = "text/markdown",
 	license = "GNU Affero General Public License v3",
@@ -18,8 +18,10 @@ setup(
 
 	packages = [
 		"deezspot",
-		"deezspot/models", "deezspot/spotloader",
-		"deezspot/deezloader", "deezspot/libutils"
+		"deezspot.models",
+		"deezspot.spotloader",
+		"deezspot.deezloader",
+		"deezspot.libutils"
 	],
 
         install_requires = [
@@ -27,6 +29,6 @@ setup(
                 "spotipy", "tqdm", "fastapi",
                 "uvicorn[standard]",
                 "spotipy-anon",
-                "librespot"
+                "librespot-spotizerr"
          ],
 )
