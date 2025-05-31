@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deezspot"
+version = "1.1"
+description = "Downloads songs, albums or playlists from deezer and spotify (clone from deezloader)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "GNU Affero General Public License v3"}
+authors = [
+    {name = "jakiepari", email = "farihmuhammad75@gmail.com"}
+]
+
+dependencies = [
+    "mutagen",
+    "pycryptodome",
+    "requests",
+    "spotipy",
+    "tqdm",
+    "fastapi",
+    "uvicorn[standard]",
+    "spotipy-anon",
+    "librespot"
+]
+
+[project.urls]
+Homepage = "https://github.com/jakiepari/deezspot"
+Repository = "https://github.com/jakiepari/deezspot.git"
+Documentation = "https://github.com/jakiepari/deezspot/blob/main/README.md"
+
+[tool.setuptools]
+packages = [
+    "deezspot",
+    "deezspot.models",
+    "deezspot.spotloader", 
+    "deezspot.deezloader",
+    "deezspot.libutils"
+]
