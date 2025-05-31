@@ -30,12 +30,6 @@ DeezSpot is a Python library designed for downloading music and episodes from De
 ```bash
 pip install deezspot-spotizerr
 ```
-*(Note: Adjust the package name if it's different on PyPI)*
-
-Or, if installing from a local source:
-```bash
-pip install .
-```
 
 ## Usage
 
