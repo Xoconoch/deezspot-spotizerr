@@ -31,6 +31,7 @@ from deezspot.libutils.utils import (
     set_path,
     create_zip,
     request,
+    sanitize_name,
 )
 from mutagen import File
 from mutagen.easyid3 import EasyID3
@@ -1220,10 +1221,11 @@ class DW_PLAYLIST:
         # --- Prepare the m3u playlist file ---
         playlist_m3u_dir = os.path.join(self.__output_dir, "playlists")
         os.makedirs(playlist_m3u_dir, exist_ok=True)
-        m3u_path = os.path.join(playlist_m3u_dir, f"{playlist_name}.m3u")
+        playlist_name_sanitized = sanitize_name(playlist_name)
+        m3u_path = os.path.join(playlist_m3u_dir, f"{playlist_name_sanitized}.m3u")
         if not os.path.exists(m3u_path):
             with open(m3u_path, "w", encoding="utf-8") as m3u_file:
-                m3u_file.write("#EXTM3U\n")
+                m3u_file.write("#EXTM3U\\n")
         # -------------------------------------
 
         playlist = Playlist()

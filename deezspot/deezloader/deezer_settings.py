@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 
 stock_quality = "MP3_320"
-method_saves = ["0", "1", "2"]
 
 qualities = {
 	"MP3_320": {

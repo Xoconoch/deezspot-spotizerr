@@ -32,6 +32,7 @@ from deezspot.libutils.utils import (
     set_path,
     trasform_sync_lyric,
     create_zip,
+    sanitize_name,
 )
 from mutagen.flac import FLAC
 from mutagen.mp3 import MP3
@@ -1136,7 +1137,7 @@ class DW_PLAYLIST:
         infos_dw = API_GW.get_playlist_data(self.__ids)['data']
         
         # Extract playlist metadata - we'll use this in the track-level reporting
-        playlist_name = self.__json_data['title']
+        playlist_name_sanitized = sanitize_name(self.__json_data['title'])
         total_tracks = len(infos_dw)
 
         playlist = Playlist()
@@ -1146,7 +1147,7 @@ class DW_PLAYLIST:
         # m3u file will be placed in output_dir/playlists
         playlist_m3u_dir = os.path.join(self.__output_dir, "playlists")
         os.makedirs(playlist_m3u_dir, exist_ok=True)
-        m3u_path = os.path.join(playlist_m3u_dir, f"{playlist_name}.m3u")
+        m3u_path = os.path.join(playlist_m3u_dir, f"{playlist_name_sanitized}.m3u")
         if not os.path.exists(m3u_path):
             with open(m3u_path, "w", encoding="utf-8") as m3u_file:
                 m3u_file.write("#EXTM3U\n")

@@ -11,7 +11,6 @@ class Preferences:
         self.recursive_quality = None
         self.recursive_download = None
         self.not_interface = None
-        self.method_save = None
         self.make_zip = None
         self.real_time_dl = None ,
         self.custom_dir_format = None,
