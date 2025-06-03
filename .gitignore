@@ -1,1 +1,11 @@
 .venv
+deezspot/libutils/__pycache__
+deezspot/models/__pycache__
+deezspot/spotloader/__pycache__
+.cache
+credentials.json
+test.py
+downloads/
+deezspot/__pycache__
+deezspot/deezloader/__pycache__
+deezspot/libutils/__pycache__

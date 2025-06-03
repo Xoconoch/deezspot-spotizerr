@@ -212,33 +212,43 @@ class EASY_DW:
 
     def __convert_audio(self) -> None:
         # First, handle Spotify's OGG to standard format conversion (always needed)
-        temp_filename = self.__song_path.replace(".ogg", ".tmp")
-        os_replace(self.__song_path, temp_filename)
-        
-        # Register the temporary file
-        register_active_download(temp_filename)
+        # self.__song_path is initially the path for the .ogg file (e.g., song.ogg)
+        og_song_path_for_ogg_output = self.__song_path
+        temp_filename = og_song_path_for_ogg_output.replace(".ogg", ".tmp")
+
+        # Move original .ogg to .tmp
+        os_replace(og_song_path_for_ogg_output, temp_filename)
+        register_active_download(temp_filename) # CURRENT_DOWNLOAD = temp_filename
         
         try:
-            # Step 1: First convert the OGG file to standard format
-            ffmpeg_cmd = f"ffmpeg -y -hide_banner -loglevel error -i \"{temp_filename}\" -c:a copy \"{self.__song_path}\""
-            system(ffmpeg_cmd)
+            # Step 1: First convert the OGG file to standard format (copy operation)
+            # Output is og_song_path_for_ogg_output
+            ffmpeg_cmd = f'ffmpeg -y -hide_banner -loglevel error -i "{temp_filename}" -c:a copy "{og_song_path_for_ogg_output}"'
+            system(ffmpeg_cmd) # Creates/overwrites og_song_path_for_ogg_output
             
-            # Register the new output file and unregister the temp file
-            register_active_download(self.__song_path)
-            
-            # Remove the temporary file
+            # temp_filename has been processed. Unregister and remove it.
+            # CURRENT_DOWNLOAD was temp_filename.
+            unregister_active_download(temp_filename) # CURRENT_DOWNLOAD should become None.
             if os.path.exists(temp_filename):
                 remove(temp_filename)
-                unregister_active_download(temp_filename)
             
-            # Step 2: Convert to requested format if specified
+            # The primary file is now og_song_path_for_ogg_output. Register it.
+            # Ensure self.__song_path reflects this, as it might be used by other parts of the class or returned.
+            self.__song_path = og_song_path_for_ogg_output
+            register_active_download(self.__song_path) # CURRENT_DOWNLOAD = self.__song_path (the .ogg)
+            
+            # Step 2: Convert to requested format if specified (e.g., MP3, FLAC)
+            conversion_to_another_format_occurred_and_cleared_state = False
             if self.__convert_to:
                 format_name, bitrate = parse_format_string(self.__convert_to)
                 if format_name:
                     try:
-                        # Convert to the requested format using our standardized converter
+                        # convert_audio is expected to handle its own input/output registration/unregistration.
+                        # Input to convert_audio is self.__song_path (the .ogg path).
+                        # On success, convert_audio should unregister its input and its output,
+                        # leaving CURRENT_DOWNLOAD as None.
                         converted_path = convert_audio(
-                            self.__song_path,
+                            self.__song_path, # Current .ogg path
                             format_name,
                             bitrate,
                             register_active_download,
@@ -247,24 +257,41 @@ class EASY_DW:
                         if converted_path != self.__song_path:
                             # Update the path to the converted file
                             self.__song_path = converted_path
-                            self.__c_track.song_path = converted_path
+                            self.__c_track.song_path = converted_path # Ensure track object has the final path
+                        
+                        conversion_to_another_format_occurred_and_cleared_state = True
                     except Exception as conv_error:
-                        # Log conversion error but continue with original file
-                        logger.error(f"Audio conversion error: {str(conv_error)}")
+                        # Conversion to a different format failed.
+                        # self.__song_path (the .ogg) is still the latest valid file and is registered.
+                        # We want to keep it, so CURRENT_DOWNLOAD should remain set to this .ogg path.
+                        logger.error(f"Audio conversion to {format_name} error: {str(conv_error)}")
+                        # conversion_to_another_format_occurred_and_cleared_state remains False.
+                # else: format_name was None after parsing __convert_to. No specific conversion attempt.
+                # conversion_to_another_format_occurred_and_cleared_state remains False.
+            
+            # If no conversion to another format was requested, or if it was requested but didn't effectively run
+            # (e.g. format_name was None), or if convert_audio failed to clear state (which would be its bug),
+            # then self.__song_path (the .ogg from Step 1) is the final successfully processed file for this method's scope.
+            # It is currently registered. Unregister it as its processing is complete.
+            if not conversion_to_another_format_occurred_and_cleared_state:
+                unregister_active_download(self.__song_path) # Clears CURRENT_DOWNLOAD if it was self.__song_path
                 
         except Exception as e:
-            # In case of failure, try to restore the original file
-            if os.path.exists(temp_filename) and not os.path.exists(self.__song_path):
-                os_replace(temp_filename, self.__song_path)
+            # This outer try/except handles errors primarily from Step 1 (OGG copy)
+            # or issues during the setup for Step 2 before convert_audio is deeply involved.
+            # In case of failure, try to restore the original file from temp if Step 1 didn't complete.
+            if os.path.exists(temp_filename) and not os.path.exists(og_song_path_for_ogg_output):
+                os_replace(temp_filename, og_song_path_for_ogg_output)
             
-            # Clean up temp files
+            # Clean up temp_filename. unregister_active_download is safe:
+            # it only clears CURRENT_DOWNLOAD if CURRENT_DOWNLOAD == temp_filename.
             if os.path.exists(temp_filename):
-                remove(temp_filename)
                 unregister_active_download(temp_filename)
+                remove(temp_filename)
                 
-            # Re-throw the exception
+            # Re-throw the exception. If a file (like og_song_path_for_ogg_output) was registered
+            # and an error occurred, it remains registered for atexit cleanup, which is intended.
             raise e
-
     def get_no_dw_track(self) -> Track:
         return self.__c_track
 
