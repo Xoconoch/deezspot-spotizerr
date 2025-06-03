@@ -32,8 +32,7 @@ from deezspot.libutils.others_settings import (
     stock_recursive_download,
     stock_not_interface,
     stock_zip,
-    method_save,
-    is_thread,
+    stock_save_cover,
     stock_real_time_dl
 )
 from deezspot.libutils.logging_utils import logger, ProgressReporter
@@ -90,8 +89,6 @@ class SpoLogin:
         recursive_quality=stock_recursive_quality,
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
-        method_save=method_save,
-        is_thread=is_thread,
         real_time_dl=stock_real_time_dl,
         custom_dir_format=None,
         custom_track_format=None,
@@ -99,7 +96,8 @@ class SpoLogin:
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Track:
         try:
             link_is_valid(link_track)
@@ -118,7 +116,6 @@ class SpoLogin:
             preferences.recursive_quality = recursive_quality
             preferences.recursive_download = recursive_download
             preferences.not_interface = not_interface
-            preferences.method_save = method_save
             preferences.is_episode = False
             preferences.custom_dir_format = custom_dir_format
             preferences.custom_track_format = custom_track_format
@@ -127,11 +124,9 @@ class SpoLogin:
             preferences.retry_delay_increase = retry_delay_increase
             preferences.max_retries = max_retries
             preferences.convert_to = convert_to
+            preferences.save_cover = save_cover
 
-            if not is_thread:
-                track = DW_TRACK(preferences).dw()
-            else:
-                track = DW_TRACK(preferences).dw2()
+            track = DW_TRACK(preferences).dw()
 
             return track
         except Exception as e:
@@ -147,8 +142,6 @@ class SpoLogin:
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
         make_zip=stock_zip,
-        method_save=method_save,
-        is_thread=is_thread,
         real_time_dl=stock_real_time_dl,
         custom_dir_format=None,
         custom_track_format=None,
@@ -156,7 +149,8 @@ class SpoLogin:
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Album:
         try:
             link_is_valid(link_album)
@@ -178,7 +172,6 @@ class SpoLogin:
             preferences.recursive_quality = recursive_quality
             preferences.recursive_download = recursive_download
             preferences.not_interface = not_interface
-            preferences.method_save = method_save
             preferences.make_zip = make_zip
             preferences.is_episode = False
             preferences.custom_dir_format = custom_dir_format
@@ -188,11 +181,9 @@ class SpoLogin:
             preferences.retry_delay_increase = retry_delay_increase
             preferences.max_retries = max_retries
             preferences.convert_to = convert_to
+            preferences.save_cover = save_cover
 
-            if not is_thread:
-                album = DW_ALBUM(preferences).dw()
-            else:
-                album = DW_ALBUM(preferences).dw2()
+            album = DW_ALBUM(preferences).dw()
 
             return album
         except Exception as e:
@@ -208,8 +199,6 @@ class SpoLogin:
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
         make_zip=stock_zip,
-        method_save=method_save,
-        is_thread=is_thread,
         real_time_dl=stock_real_time_dl,
         custom_dir_format=None,
         custom_track_format=None,
@@ -217,7 +206,8 @@ class SpoLogin:
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Playlist:
         try:
             link_is_valid(link_playlist)
@@ -253,7 +243,6 @@ class SpoLogin:
             preferences.recursive_quality = recursive_quality
             preferences.recursive_download = recursive_download
             preferences.not_interface = not_interface
-            preferences.method_save = method_save
             preferences.make_zip = make_zip
             preferences.is_episode = False
             preferences.custom_dir_format = custom_dir_format
@@ -263,11 +252,9 @@ class SpoLogin:
             preferences.retry_delay_increase = retry_delay_increase
             preferences.max_retries = max_retries
             preferences.convert_to = convert_to
+            preferences.save_cover = save_cover
 
-            if not is_thread:
-                playlist = DW_PLAYLIST(preferences).dw()
-            else:
-                playlist = DW_PLAYLIST(preferences).dw2()
+            playlist = DW_PLAYLIST(preferences).dw()
 
             return playlist
         except Exception as e:
@@ -282,8 +269,6 @@ class SpoLogin:
         recursive_quality=stock_recursive_quality,
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
-        method_save=method_save,
-        is_thread=is_thread,
         real_time_dl=stock_real_time_dl,
         custom_dir_format=None,
         custom_track_format=None,
@@ -291,7 +276,8 @@ class SpoLogin:
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Episode:
         try:
             link_is_valid(link_episode)
@@ -312,7 +298,6 @@ class SpoLogin:
             preferences.recursive_quality = recursive_quality
             preferences.recursive_download = recursive_download
             preferences.not_interface = not_interface
-            preferences.method_save = method_save
             preferences.is_episode = True
             preferences.custom_dir_format = custom_dir_format
             preferences.custom_track_format = custom_track_format
@@ -321,11 +306,9 @@ class SpoLogin:
             preferences.retry_delay_increase = retry_delay_increase
             preferences.max_retries = max_retries
             preferences.convert_to = convert_to
+            preferences.save_cover = save_cover
 
-            if not is_thread:
-                episode = DW_EPISODE(preferences).dw()
-            else:
-                episode = DW_EPISODE(preferences).dw2()
+            episode = DW_EPISODE(preferences).dw()
 
             return episode
         except Exception as e:
@@ -343,8 +326,6 @@ class SpoLogin:
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
         make_zip=stock_zip,
-        method_save=method_save,
-        is_thread=is_thread,
         real_time_dl=stock_real_time_dl,
         custom_dir_format=None,
         custom_track_format=None,
@@ -382,8 +363,6 @@ class SpoLogin:
                     recursive_download=recursive_download,
                     not_interface=not_interface,
                     make_zip=make_zip,
-                    method_save=method_save,
-                    is_thread=is_thread,
                     real_time_dl=real_time_dl,
                     custom_dir_format=custom_dir_format,
                     custom_track_format=custom_track_format,
@@ -408,7 +387,6 @@ class SpoLogin:
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
         make_zip=stock_zip,
-        method_save=method_save,
         real_time_dl=stock_real_time_dl,
         custom_dir_format=None,
         custom_track_format=None,
@@ -416,7 +394,8 @@ class SpoLogin:
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Smart:
         try:
             link_is_valid(link)
@@ -439,14 +418,14 @@ class SpoLogin:
                     recursive_quality=recursive_quality,
                     recursive_download=recursive_download,
                     not_interface=not_interface,
-                    method_save=method_save,
                     real_time_dl=real_time_dl,
                     custom_dir_format=custom_dir_format,
                     custom_track_format=custom_track_format,
                     pad_tracks=pad_tracks,
                     initial_retry_delay=initial_retry_delay,
                     retry_delay_increase=retry_delay_increase,
-                    max_retries=max_retries
+                    max_retries=max_retries,
+                    save_cover=save_cover
                 )
                 smart.type = "track"
                 smart.track = track
@@ -462,14 +441,15 @@ class SpoLogin:
                     recursive_download=recursive_download,
                     not_interface=not_interface,
                     make_zip=make_zip,
-                    method_save=method_save,
                     real_time_dl=real_time_dl,
                     custom_dir_format=custom_dir_format,
                     custom_track_format=custom_track_format,
                     pad_tracks=pad_tracks,
                     initial_retry_delay=initial_retry_delay,
                     retry_delay_increase=retry_delay_increase,
-                    max_retries=max_retries
+                    max_retries=max_retries,
+                    convert_to=convert_to,
+                    save_cover=save_cover
                 )
                 smart.type = "album"
                 smart.album = album
@@ -485,14 +465,15 @@ class SpoLogin:
                     recursive_download=recursive_download,
                     not_interface=not_interface,
                     make_zip=make_zip,
-                    method_save=method_save,
                     real_time_dl=real_time_dl,
                     custom_dir_format=custom_dir_format,
                     custom_track_format=custom_track_format,
                     pad_tracks=pad_tracks,
                     initial_retry_delay=initial_retry_delay,
                     retry_delay_increase=retry_delay_increase,
-                    max_retries=max_retries
+                    max_retries=max_retries,
+                    convert_to=convert_to,
+                    save_cover=save_cover
                 )
                 smart.type = "playlist"
                 smart.playlist = playlist
@@ -507,14 +488,15 @@ class SpoLogin:
                     recursive_quality=recursive_quality,
                     recursive_download=recursive_download,
                     not_interface=not_interface,
-                    method_save=method_save,
                     real_time_dl=real_time_dl,
                     custom_dir_format=custom_dir_format,
                     custom_track_format=custom_track_format,
                     pad_tracks=pad_tracks,
                     initial_retry_delay=initial_retry_delay,
                     retry_delay_increase=retry_delay_increase,
-                    max_retries=max_retries
+                    max_retries=max_retries,
+                    convert_to=convert_to,
+                    save_cover=save_cover
                 )
                 smart.type = "episode"
                 smart.episode = episode

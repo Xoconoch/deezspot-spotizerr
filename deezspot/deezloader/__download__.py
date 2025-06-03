@@ -1,7 +1,8 @@
 #!/usr/bin/python3
 import os
 import json
-import re
+import requests
+import time
 from os.path import isfile
 from copy import deepcopy
 from deezspot.libutils.audio_converter import convert_audio, parse_format_string
@@ -32,6 +33,9 @@ from deezspot.libutils.utils import (
     set_path,
     trasform_sync_lyric,
     create_zip,
+    sanitize_name,
+    save_cover_image,
+    __get_dir as get_album_directory,
 )
 from mutagen.flac import FLAC
 from mutagen.mp3 import MP3
@@ -191,7 +195,6 @@ class EASY_DW:
         self.__ids = preferences.ids
         self.__link = preferences.link
         self.__output_dir = preferences.output_dir
-        self.__method_save = preferences.method_save
         self.__not_interface = preferences.not_interface
         self.__quality_download = preferences.quality_download
         self.__recursive_quality = preferences.recursive_quality
@@ -276,7 +279,6 @@ class EASY_DW:
             self.__output_dir,
             self.__song_quality,
             self.__file_format,
-            self.__method_save,
             custom_dir_format=custom_dir_format,
             custom_track_format=custom_track_format,
             pad_tracks=pad_tracks
@@ -291,7 +293,6 @@ class EASY_DW:
             self.__output_dir,
             self.__song_quality,
             self.__file_format,
-            self.__method_save,
             is_episode=True,
             custom_dir_format=custom_dir_format,
             custom_track_format=custom_track_format,
@@ -588,18 +589,13 @@ class EASY_DW:
                     "artist": self.__song_metadata.get("artist", ""),
                     "status": "progress"
                 }
-                
-                # Use Spotify URL if available, otherwise use Deezer link
                 spotify_url = getattr(self.__preferences, 'spotify_url', None)
                 progress_data["url"] = spotify_url if spotify_url else self.__link
-                
-                # Add parent info if present
                 if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
                     playlist_data = self.__preferences.json_data
                     playlist_name = playlist_data.get('title', 'unknown')
                     total_tracks = getattr(self.__preferences, 'total_tracks', 0)
                     current_track = getattr(self.__preferences, 'track_number', 0)
-                    
                     progress_data.update({
                         "current_track": current_track,
                         "total_tracks": total_tracks,
@@ -616,7 +612,6 @@ class EASY_DW:
                     album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('album_artist', ''))
                     total_tracks = getattr(self.__preferences, 'total_tracks', 0)
                     current_track = getattr(self.__preferences, 'track_number', 0)
-                    
                     progress_data.update({
                         "current_track": current_track,
                         "total_tracks": total_tracks,
@@ -628,30 +623,31 @@ class EASY_DW:
                             "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"
                         }
                     })
-                
                 Download_JOB.report_progress(progress_data)
                 
-                try:
-                    # Decrypt the file using the utility function
-                    decryptfile(c_crypted_audio, self.__fallback_ids, self.__song_path)
-                    logger.debug(f"Successfully decrypted track using {encryption_type} encryption")
-                except Exception as decrypt_error:
-                    # Detailed error logging for debugging
-                    logger.error(f"Decryption error ({encryption_type}): {str(decrypt_error)}")
-                    if "Data must be padded" in str(decrypt_error):
-                        logger.error("This appears to be a padding issue with Blowfish decryption")
-                    raise
-                
-                self.__add_more_tags()
-                
+                # Start of processing block (decryption, tagging, cover, conversion)
+                # Decrypt the file using the utility function
+                decryptfile(c_crypted_audio, self.__fallback_ids, self.__song_path)
+                logger.debug(f"Successfully decrypted track using {encryption_type} encryption")
+            
+                self.__add_more_tags() # self.__song_metadata is updated here
+                self.__c_track.tags = self.__song_metadata # IMPORTANT: Update track object's tags
+
+                # Save cover image if requested
+                if self.__preferences.save_cover and self.__song_metadata.get('image'):
+                    try:
+                        track_directory = os.path.dirname(self.__song_path)
+                        save_cover_image(self.__song_metadata['image'], track_directory, "cover.jpg")
+                        logger.info(f"Saved cover image for track in {track_directory}")
+                    except Exception as e_img_save:
+                        logger.warning(f"Failed to save cover image for track: {e_img_save}")
+
                 # Apply audio conversion if requested
                 if self.__convert_to:
                     format_name, bitrate = parse_format_string(self.__convert_to)
                     if format_name:
-                        # Register and unregister functions for tracking downloads
-                        from deezspot.deezloader.__download__ import register_active_download, unregister_active_download
+                        from deezspot.deezloader.__download__ import register_active_download, unregister_active_download # Ensure these are available or handle differently
                         try:
-                            # Update the path with the converted file path
                             converted_path = convert_audio(
                                 self.__song_path, 
                                 format_name, 
@@ -660,97 +656,52 @@ class EASY_DW:
                                 unregister_active_download
                             )
                             if converted_path != self.__song_path:
-                                # Update path in track object if conversion happened
                                 self.__song_path = converted_path
                                 self.__c_track.song_path = converted_path
                         except Exception as conv_error:
-                            # Log conversion error but continue with original file
                             logger.error(f"Audio conversion error: {str(conv_error)}")
-                
+                            # Decide if this is a fatal error for the track or if we proceed with original
+            
                 # Write tags to the final file (original or converted)
                 write_tags(self.__c_track)
-            except Exception as e:
+                self.__c_track.success = True # Mark as successful only after all steps including tags
+
+            except Exception as e: # Handles errors from __write_track, decrypt, add_tags, save_cover, convert, write_tags
                 if isfile(self.__song_path):
                     os.remove(self.__song_path)
                 
-                # Improve error message formatting
                 error_msg = str(e)
-                if "Data must be padded" in error_msg:
-                    error_msg = "Decryption error (padding issue) - Try a different quality setting or download format"
-                elif isinstance(e, ConnectionError) or "Connection" in error_msg:
-                    error_msg = "Connection error - Check your internet connection"
-                elif "timeout" in error_msg.lower():
-                    error_msg = "Request timed out - Server may be busy"
-                elif "403" in error_msg or "Forbidden" in error_msg:
-                    error_msg = "Access denied - Track might be region-restricted or premium-only"
-                elif "404" in error_msg or "Not Found" in error_msg:
-                    error_msg = "Track not found - It might have been removed"
+                if "Data must be padded" in error_msg: error_msg = "Decryption error (padding issue) - Try a different quality setting or download format"
+                elif isinstance(e, ConnectionError) or "Connection" in error_msg: error_msg = "Connection error - Check your internet connection"
+                elif "timeout" in error_msg.lower(): error_msg = "Request timed out - Server may be busy"
+                elif "403" in error_msg or "Forbidden" in error_msg: error_msg = "Access denied - Track might be region-restricted or premium-only"
+                elif "404" in error_msg or "Not Found" in error_msg: error_msg = "Track not found - It might have been removed"
                 
-                # Create formatted error report
-                progress_data = {
-                    "type": "track",
-                    "status": "error",
-                    "song": self.__song_metadata.get('music', ''),
-                    "artist": self.__song_metadata.get('artist', ''),
-                    "error": error_msg,
-                    "url": getattr(self.__preferences, 'spotify_url', None) or self.__link,
+                # (Error reporting code as it exists)
+                error_progress_data = {
+                    "type": "track", "status": "error",
+                    "song": self.__song_metadata.get('music', ''), "artist": self.__song_metadata.get('artist', ''),
+                    "error": error_msg, "url": getattr(self.__preferences, 'spotify_url', None) or self.__link,
                     "convert_to": self.__convert_to
                 }
-                
-                # Add parent info based on parent type
                 if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
-                    playlist_data = self.__preferences.json_data
-                    playlist_name = playlist_data.get('title', 'unknown')
-                    total_tracks = getattr(self.__preferences, 'total_tracks', 0)
-                    current_track = getattr(self.__preferences, 'track_number', 0)
-                    
-                    progress_data.update({
-                        "current_track": current_track,
-                        "total_tracks": total_tracks,
-                        "parent": {
-                            "type": "playlist",
-                            "name": playlist_name,
-                            "owner": playlist_data.get('creator', {}).get('name', 'unknown'),
-                            "total_tracks": total_tracks,
-                            "url": f"https://deezer.com/playlist/{playlist_data.get('id', '')}"
-                        }
-                    })
+                    playlist_data = self.__preferences.json_data; playlist_name = playlist_data.get('title', 'unknown')
+                    total_tracks = getattr(self.__preferences, 'total_tracks', 0); current_track = getattr(self.__preferences, 'track_number', 0)
+                    error_progress_data.update({"current_track": current_track, "total_tracks": total_tracks, "parent": {"type": "playlist", "name": playlist_name, "owner": playlist_data.get('creator', {}).get('name', 'unknown'), "total_tracks": total_tracks, "url": f"https://deezer.com/playlist/{playlist_data.get('id', '')}"}})
                 elif self.__parent == "album":
-                    album_name = self.__song_metadata.get('album', '')
-                    album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('album_artist', ''))
-                    total_tracks = getattr(self.__preferences, 'total_tracks', 0)
-                    current_track = getattr(self.__preferences, 'track_number', 0)
-                    
-                    progress_data.update({
-                        "current_track": current_track,
-                        "total_tracks": total_tracks,
-                        "parent": {
-                            "type": "album",
-                            "title": album_name,
-                            "artist": album_artist,
-                            "total_tracks": total_tracks,
-                            "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"
-                        }
-                    })
-                
-                # Report the error
-                Download_JOB.report_progress(progress_data)
+                    album_name = self.__song_metadata.get('album', ''); album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('album_artist', ''))
+                    total_tracks = getattr(self.__preferences, 'total_tracks', 0); current_track = getattr(self.__preferences, 'track_number', 0)
+                    error_progress_data.update({"current_track": current_track, "total_tracks": total_tracks, "parent": {"type": "album", "title": album_name, "artist": album_artist, "total_tracks": total_tracks, "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"}})
+                Download_JOB.report_progress(error_progress_data)
                 logger.error(f"Failed to process track: {error_msg}")
                 
-                # Still raise the exception to maintain original flow
-                # Add the original exception e to the message for more context
-                self.__c_track.success = False # Mark as failed
-                self.__c_track.error_message = error_msg # Store the refined error message
+                self.__c_track.success = False
+                self.__c_track.error_message = error_msg
                 raise TrackNotFound(f"Failed to process {self.__song_path}. Error: {error_msg}. Original Exception: {str(e)}")
-
-            # If download and processing (like decryption, tagging) were successful before conversion
-            if not self.__convert_to: # Or if conversion was successful
-                 self.__c_track.success = True
 
             return self.__c_track
 
-        except Exception as e:
-            # Add more context to this exception
+        except Exception as e: # Outer exception for initial media checks, etc.
             song_title = self.__song_metadata.get('music', 'Unknown Song')
             artist_name = self.__song_metadata.get('artist', 'Unknown Artist')
             error_message = f"Download failed for '{song_title}' by '{artist_name}' (Link: {self.__link}). Error: {str(e)}"
@@ -859,6 +810,9 @@ class EASY_DW:
         if self.__infos_dw.get('LYRICS_ID', 0) != 0:
             need = API_GW.get_lyric(self.__ids)
 
+            if "LYRICS_TEXT" in need:
+                self.__song_metadata['lyric'] = need["LYRICS_TEXT"]
+
             if "LYRICS_SYNC_JSON" in need:
                 self.__song_metadata['lyric_sync'] = trasform_sync_lyric(
                     need['LYRICS_SYNC_JSON']
@@ -914,10 +868,9 @@ class DW_ALBUM:
         self.__ids = self.__preferences.ids
         self.__make_zip = self.__preferences.make_zip
         self.__output_dir = self.__preferences.output_dir
-        self.__method_save = self.__preferences.method_save
-        self.__song_metadata = self.__preferences.song_metadata
         self.__not_interface = self.__preferences.not_interface
         self.__quality_download = self.__preferences.quality_download
+        self.__recursive_quality = self.__preferences.recursive_quality
 
         self.__song_metadata_items = self.__song_metadata.items()
 
@@ -965,11 +918,11 @@ class DW_ALBUM:
         infos_dw = API_GW.get_album_data(self.__ids)['data']
 
         md5_image = infos_dw[0]['ALB_PICTURE']
-        image = API.choose_img(md5_image)
-        self.__song_metadata['image'] = image
+        image_bytes = API.choose_img(md5_image, size="1400x1400") # Fetch highest quality
+        self.__song_metadata['image'] = image_bytes # Store for tagging if needed, already bytes
 
         album = Album(self.__ids)
-        album.image = image
+        album.image = image_bytes # Store raw image bytes
         album.md5_image = md5_image
         album.nb_tracks = self.__song_metadata['nb_tracks']
         album.album_name = self.__song_metadata['album']
@@ -982,7 +935,13 @@ class DW_ALBUM:
             infos_dw, self.__quality_download
         )
         
-        # The album_artist for tagging individual tracks will be derived_album_artist_from_contributors
+        # Determine album base directory once
+        album_base_directory = get_album_directory(
+            self.__song_metadata, # Album level metadata
+            self.__output_dir,
+            custom_dir_format=self.__preferences.custom_dir_format,
+            pad_tracks=self.__preferences.pad_tracks
+        )
         
         total_tracks = len(infos_dw)
         for a in range(total_tracks):
@@ -1073,6 +1032,10 @@ class DW_ALBUM:
                     logger.warning(f"Track not found: {song} :( Details: {track.error_message}. URL: {c_preferences.link if c_preferences else 'N/A'}")
             tracks.append(track)
 
+        # Save album cover image
+        if self.__preferences.save_cover and album.image and album_base_directory:
+            save_cover_image(album.image, album_base_directory, "cover.jpg")
+
         if self.__make_zip:
             song_quality = tracks[0].quality if tracks else 'Unknown'
             # Pass along custom directory format if set
@@ -1082,7 +1045,6 @@ class DW_ALBUM:
                 output_dir=self.__output_dir,
                 song_metadata=self.__song_metadata,
                 song_quality=song_quality,
-                method_save=self.__method_save,
                 custom_dir_format=custom_dir_format
             )
             album.zip_path = zip_name
@@ -1136,7 +1098,7 @@ class DW_PLAYLIST:
         infos_dw = API_GW.get_playlist_data(self.__ids)['data']
         
         # Extract playlist metadata - we'll use this in the track-level reporting
-        playlist_name = self.__json_data['title']
+        playlist_name_sanitized = sanitize_name(self.__json_data['title'])
         total_tracks = len(infos_dw)
 
         playlist = Playlist()
@@ -1146,7 +1108,7 @@ class DW_PLAYLIST:
         # m3u file will be placed in output_dir/playlists
         playlist_m3u_dir = os.path.join(self.__output_dir, "playlists")
         os.makedirs(playlist_m3u_dir, exist_ok=True)
-        m3u_path = os.path.join(playlist_m3u_dir, f"{playlist_name}.m3u")
+        m3u_path = os.path.join(playlist_m3u_dir, f"{playlist_name_sanitized}.m3u")
         if not os.path.exists(m3u_path):
             with open(m3u_path, "w", encoding="utf-8") as m3u_file:
                 m3u_file.write("#EXTM3U\n")
@@ -1225,7 +1187,6 @@ class DW_EPISODE:
         self.__preferences = preferences
         self.__ids = preferences.ids
         self.__output_dir = preferences.output_dir
-        self.__method_save = preferences.method_save
         self.__not_interface = preferences.not_interface
         self.__quality_download = preferences.quality_download
         
@@ -1334,6 +1295,17 @@ class DW_EPISODE:
             }
             Download_JOB.report_progress(progress_data)
             
+            # Save cover image for the episode
+            if self.__preferences.save_cover:
+                episode_image_md5 = infos_dw.get('EPISODE_IMAGE_MD5', '')
+                episode_image_data = None
+                if episode_image_md5:
+                    episode_image_data = API.choose_img(episode_image_md5, size="1200x1200")
+                
+                if episode_image_data:
+                    episode_directory = os.path.dirname(output_path)
+                    save_cover_image(episode_image_data, episode_directory, "cover.jpg")
+
             return episode
             
         except Exception as e:

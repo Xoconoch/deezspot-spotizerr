@@ -9,10 +9,11 @@ from zipfile import ZipFile, ZIP_DEFLATED
 from deezspot.models.track import Track
 from deezspot.exceptions import InvalidLink
 from deezspot.libutils.others_settings import supported_link, header
+from deezspot.libutils.logging_utils import ProgressReporter, logger
 
 from os.path import (
     isdir, basename,
-    join, isfile
+    join, isfile, dirname
 )
 
 def link_is_valid(link):
@@ -120,247 +121,183 @@ def what_kind(link):
     return url
 
 def __get_tronc(string):
-    l_encoded = len(string.encode())
-    if l_encoded > 242:
-        n_tronc = len(string) - l_encoded - 242
-    else:
-        n_tronc = 242
-    return n_tronc
+    return string[:len(string) - 1]
 
 def apply_custom_format(format_str, metadata: dict, pad_tracks=True) -> str:
-    """
-    Replaces placeholders in the format string with values from metadata.
-    Placeholders are denoted by %key%, for example: "%ar_album%/%album%".
-    The pad_tracks parameter controls whether track numbers are padded with leading zeros.
-    """
     def replacer(match):
-        key = match.group(1)
-        # Alias and special keys
-        if key == 'album_artist':
-            raw_value = metadata.get('ar_album', metadata.get('album_artist'))
-        elif key == 'year':
-            raw_value = metadata.get('release_date', metadata.get('year'))
-        elif key == 'date':
-            raw_value = metadata.get('release_date', metadata.get('date'))
-        elif key == 'discnum':
-            raw_value = metadata.get('disc_number', metadata.get('discnum'))
-        else:
-            # All other placeholders map directly
-            raw_value = metadata.get(key)
-        
-        # Friendly names for missing metadata
-        key_mappings = {
-            'ar_album': 'album artist',
-            'album_artist': 'album artist',
-            'artist': 'artist',
-            'album': 'album',
-            'tracknum': 'track number',
-            'discnum': 'disc number',
-            'date': 'release date',
-            'year': 'year',
-            'genre': 'genre',
-            'isrc': 'ISRC',
-            'explicit': 'explicit flag',
-            'duration': 'duration',
-            'publisher': 'publisher',
-            'composer': 'composer',
-            'copyright': 'copyright',
-            'author': 'author',
-            'lyricist': 'lyricist',
-            'version': 'version',
-            'comment': 'comment',
-            'encodedby': 'encoded by',
-            'language': 'language',
-            'lyrics': 'lyrics',
-            'mood': 'mood',
-            'rating': 'rating',
-            'website': 'website',
-            'replaygain_album_gain': 'replaygain album gain',
-            'replaygain_album_peak': 'replaygain album peak',
-            'replaygain_track_gain': 'replaygain track gain',
-            'replaygain_track_peak': 'replaygain track peak',
-        }
-        
-        # Custom formatting for specific keys
-        if key == 'tracknum' and pad_tracks and raw_value not in (None, ''):
-            try:
-                return sanitize_name(f"{int(raw_value):02d}")
-            except (ValueError, TypeError):
-                pass
-        if key == 'discnum' and raw_value not in (None, ''):
-            try:
-                return sanitize_name(f"{int(raw_value):02d}")
-            except (ValueError, TypeError):
-                pass
-        if key == 'year' and raw_value not in (None, ''):
-            m = re.match(r"^(\d{4})", str(raw_value))
-            if m:
-                return sanitize_name(m.group(1))
-        
-        # Handle missing metadata with descriptive default
-        if raw_value in (None, ''):
-            friendly = key_mappings.get(key, key.replace('_', ' '))
-            return sanitize_name(f"Unknown {friendly}")
-        
-        # Default handling
-        return sanitize_name(str(raw_value))
-    return re.sub(r'%(\w+)%', replacer, format_str)
+        full_key = match.group(1)  # e.g., "artist", "ar_album_1"
 
-def __get_dir(song_metadata, output_dir, method_save, custom_dir_format=None, pad_tracks=True):
-    """
-    Returns the final directory based either on a custom directory format string
-    or the legacy method_save logic.
-    """
-    if song_metadata is None:
-        raise ValueError("song_metadata cannot be None")
-    
-    if custom_dir_format is not None:
-        # Use the custom format string
-        dir_name = apply_custom_format(custom_dir_format, song_metadata, pad_tracks)
-    else:
-        # Legacy logic based on method_save (for episodes or albums)
-        if 'show' in song_metadata and 'name' in song_metadata:
-            show = var_excape(song_metadata.get('show', ''))
-            episode = var_excape(song_metadata.get('name', ''))
-            if show and episode:
-                dir_name = f"{show} - {episode}"
-            elif show:
-                dir_name = show
-            elif episode:
-                dir_name = episode
-            else:
-                dir_name = "Unknown Episode"
+        # Check for specific indexed placeholders: artist_INDEX or ar_album_INDEX
+        # Allows %artist_1%, %ar_album_1%, etc.
+        indexed_artist_match = re.fullmatch(r'(artist|ar_album)_(\d+)', full_key)
+
+        if indexed_artist_match:
+            base_key = indexed_artist_match.group(1)  # "artist" or "ar_album"
+            try:
+                index = int(indexed_artist_match.group(2))
+            except ValueError: # Should not happen with \d+ but good practice
+                return ""
+
+
+            raw_value = metadata.get(base_key)  # Get the value of "artist" or "ar_album"
+            items = []
+
+            if isinstance(raw_value, str):
+                # Split semicolon-separated strings and strip whitespace
+                items = [item.strip() for item in raw_value.split(';') if item.strip()]
+            elif isinstance(raw_value, list):
+                # Convert all items to string, strip whitespace
+                items = [str(item).strip() for item in raw_value if str(item).strip()]
+            # If raw_value is not string or list, items remains []
+
+            if items:  # If we have a list of artists/ar_album
+                if 1 <= index <= len(items):
+                    return items[index - 1]
+                elif items:  # Index out of bounds, but list is not empty
+                    return items[0]  # Fallback to the first item
+                # If items is empty after processing, fall through
+            
+            # Fallback if no items or base_key was not found or not list/string
+            return ""
+
         else:
-            album = var_excape(song_metadata.get('album', ''))
-            ar_album = var_excape(song_metadata.get('ar_album', ''))
-            if method_save == 0:
-                dir_name = f"{album} - {ar_album}"
-            elif method_save == 1:
-                dir_name = f"{ar_album}/{album}"
-            elif method_save == 2:
-                dir_name = f"{album} - {ar_album}"
-            elif method_save == 3:
-                dir_name = f"{album} - {ar_album}"
-            else:
-                dir_name = "Unknown"
+            # Original non-indexed placeholder logic (for %album%, %title%, %artist%, %ar_album%, etc.)
+            value = metadata.get(full_key, '')
+            if pad_tracks and full_key in ['tracknum', 'discnum']:
+                str_value = str(value)
+                # Pad with leading zero if it's a single digit
+                if str_value.isdigit() and len(str_value) == 1:
+                    return str_value.zfill(2)
+            return str(value)
+
+    return re.sub(r'%([^%]+)%', replacer, format_str)
+
+def __get_dir(song_metadata, output_dir, custom_dir_format=None, pad_tracks=True):
+    # If custom_dir_format is explicitly empty or None, use output_dir directly
+    if not custom_dir_format:
+        # Ensure output_dir itself exists, as __check_dir won't be called on a subpath
+        __check_dir(output_dir)
+        return output_dir
+
+    # Apply the custom format string.
+    # pad_tracks is passed along in case 'tracknum' or 'discnum' are used in dir format.
+    formatted_path_segment = apply_custom_format(custom_dir_format, song_metadata, pad_tracks)
     
-    # Prevent absolute paths and sanitize each directory segment
-    dir_name = dir_name.strip('/')
-    dir_name = '/'.join(sanitize_name(seg) for seg in dir_name.split('/') if seg)
-    final_dir = join(output_dir, dir_name)
-    if not isdir(final_dir):
-        makedirs(final_dir)
-    return final_dir
+    # Sanitize each component of the formatted path segment
+    sanitized_path_segment = "/".join(
+        sanitize_name(part) for part in formatted_path_segment.split("/")
+    )
+
+    # Join with the base output directory
+    path = join(output_dir, sanitized_path_segment)
+    
+    # __check_dir will create the directory if it doesn't exist.
+    __check_dir(path)
+    return path
 
 def set_path(
     song_metadata, output_dir,
-    song_quality, file_format, method_save,
+    song_quality, file_format,
     is_episode=False,
     custom_dir_format=None,
     custom_track_format=None,
     pad_tracks=True
 ):
-    if song_metadata is None:
-        raise ValueError("song_metadata cannot be None")
-    
-    if is_episode:
-        if custom_track_format is not None:
-            song_name = apply_custom_format(custom_track_format, song_metadata, pad_tracks)
-        else:
-            show = var_excape(song_metadata.get('show', ''))
-            episode = var_excape(song_metadata.get('name', ''))
-            if show and episode:
-                song_name = f"{show} - {episode}"
-            elif show:
-                song_name = show
-            elif episode:
-                song_name = episode
-            else:
-                song_name = "Unknown Episode"
-    else:
-        if custom_track_format is not None:
-            song_name = apply_custom_format(custom_track_format, song_metadata, pad_tracks)
-        else:
-            album = var_excape(song_metadata.get('album', ''))
-            artist = var_excape(song_metadata.get('artist', ''))
-            music = var_excape(song_metadata.get('music', ''))  # Track title
-            discnum = song_metadata.get('discnum', '')
-            tracknum = song_metadata.get('tracknum', '')
+    # Determine the directory for the song
+    directory = __get_dir(
+        song_metadata,
+        output_dir,
+        custom_dir_format=custom_dir_format,
+        pad_tracks=pad_tracks
+    )
 
-            if method_save == 0:
-                song_name = f"{album} CD {discnum} TRACK {tracknum}"
-            elif method_save == 1:
-                try:
-                    if pad_tracks:
-                        tracknum = f"{int(tracknum):02d}"  # Format as two digits with padding
-                    else:
-                        tracknum = f"{int(tracknum)}"  # Format without padding
-                except (ValueError, TypeError):
-                    pass  # Fallback to raw value
-                tracknum_clean = var_excape(str(tracknum))
-                tracktitle_clean = var_excape(music)
-                song_name = f"{tracknum_clean}. {tracktitle_clean}"
-            elif method_save == 2:
-                isrc = song_metadata.get('isrc', '')
-                song_name = f"{music} - {artist} [{isrc}]"
-            elif method_save == 3:
-                song_name = f"{discnum}|{tracknum} - {music} - {artist}"
+    # Determine the filename for the song
+    # Default track format if no custom one is provided
+    if custom_track_format is None:
+        if is_episode:
+            # Default for episodes: %title%
+            # Episodes usually don't have artist/album context in the same way tracks do.
+            # Their 'album' is the show name, and 'artist' is the publisher.
+            custom_track_format = "%music%"
+        else:
+            # Default for tracks: %artist% - %title%
+            custom_track_format = "%artist% - %music%"
     
-    # Sanitize song_name to remove invalid chars and prevent '/'
-    song_name = sanitize_name(song_name)
-    # Truncate to avoid filesystem limits
-    max_length = 255 - len(output_dir) - len(file_format)
-    song_name = song_name[:max_length]
+    # Apply the custom format string for the track filename.
+    # pad_tracks is passed along for track/disc numbers in filename.
+    track_filename_base = apply_custom_format(custom_track_format, song_metadata, pad_tracks)
+    track_filename_base = sanitize_name(track_filename_base)
 
-    # Build final path
-    song_dir = __get_dir(song_metadata, output_dir, method_save, custom_dir_format, pad_tracks)
-    __check_dir(song_dir)
-    n_tronc = __get_tronc(song_name)
-    song_path = f"{song_dir}/{song_name[:n_tronc]}{file_format}"
-    return song_path
+    # Add quality and file format to the filename
+    if song_quality and file_format:
+        # Ensure file_format starts with a dot
+        ext = file_format if file_format.startswith('.') else f".{file_format}"
+        filename = f"{track_filename_base} [{song_quality}]{ext}"
+    elif file_format: # Only file_format provided
+        ext = file_format if file_format.startswith('.') else f".{file_format}"
+        filename = f"{track_filename_base}{ext}"
+    else: # Neither provided (should not happen for standard audio)
+        filename = track_filename_base
+
+    return join(directory, filename)
 
 def create_zip(
     tracks: list[Track],
     output_dir=None,
-    song_metadata=None,
-    song_quality=None,
-    method_save=0,
-    zip_name=None
+    song_metadata=None, # Album/Playlist level metadata
+    song_quality=None, # Overall quality for the zip, if applicable
+    zip_name=None, # Specific name for the zip file
+    custom_dir_format=None # To determine zip name if not provided, and for paths inside zip
 ):
-    if not zip_name:
-        album = var_excape(song_metadata.get('album', ''))
-        song_dir = __get_dir(song_metadata, output_dir, method_save)
-        if method_save == 0:
-            zip_name = f"{album}"
-        elif method_save == 1:
-            artist = var_excape(song_metadata.get('ar_album', ''))
-            zip_name = f"{album} - {artist}"
-        elif method_save == 2:
-            artist = var_excape(song_metadata.get('ar_album', ''))
-            upc = song_metadata.get('upc', '')
-            zip_name = f"{album} - {artist} {upc}"
-        elif method_save == 3:
-            artist = var_excape(song_metadata.get('ar_album', ''))
-            upc = song_metadata.get('upc', '')
-            zip_name = f"{album} - {artist} {upc}"
-        n_tronc = __get_tronc(zip_name)
-        zip_name = zip_name[:n_tronc]
-        zip_name += ".zip"
-        zip_path = f"{song_dir}/{zip_name}"
+    # Determine the zip file name and path
+    if zip_name:
+        # If zip_name is a full path, use it as is.
+        # Otherwise, prepend output_dir.
+        if not basename(zip_name) == zip_name: # Checks if it's just a filename
+            actual_zip_path = zip_name
+        else:
+            # Ensure output_dir exists for placing the zip file
+            if not output_dir:
+                # Fallback to a default if output_dir is not provided with a relative zip_name
+                output_dir = "."
+                __check_dir(output_dir)
+            actual_zip_path = join(output_dir, zip_name)
+    elif song_metadata and output_dir: # Construct default name if song_metadata and output_dir exist
+        # Use album/playlist name and quality for default zip name
+        # Sanitize the album/playlist name part of the zip file
+        name_part = sanitize_name(song_metadata.get('album', song_metadata.get('name', 'archive')))
+        quality_part = f" [{song_quality}]" if song_quality else ""
+        actual_zip_path = join(output_dir, f"{name_part}{quality_part}.zip")
     else:
-        zip_path = zip_name
+        # Fallback zip name if not enough info
+        actual_zip_path = join(output_dir if output_dir else ".", "archive.zip")
 
-    z = ZipFile(zip_path, "w", ZIP_DEFLATED)
-    for track in tracks:
-        if not track.success:
-            continue
-        c_song_path = track.song_path
-        song_path = basename(c_song_path)
-        if not isfile(c_song_path):
-            continue
-        z.write(c_song_path, song_path)
-    z.close()
-    return zip_path
+    # Ensure the directory for the zip file exists
+    zip_dir = dirname(actual_zip_path)
+    __check_dir(zip_dir)
+
+    with ZipFile(actual_zip_path, 'w', ZIP_DEFLATED) as zf:
+        for track in tracks:
+            if track.success and isfile(track.song_path):
+                # Determine path inside the zip
+                # This uses the same logic as saving individual files,
+                # but relative to the zip root.
+                # We pass an empty string as base_output_dir to set_path essentially,
+                # so it generates a relative path structure.
+                path_in_zip = set_path(
+                    track.tags, # Use individual track metadata for path inside zip
+                    "",         # Base output dir (empty for relative paths in zip)
+                    track.quality,
+                    track.file_format,
+                    custom_dir_format=custom_dir_format, # Use album/playlist custom dir format
+                    custom_track_format=track.tags.get('custom_track_format'), # Use track specific if available
+                    pad_tracks=track.tags.get('pad_tracks', True)
+                )
+                # Remove leading slash if any, to ensure it's relative inside zip
+                path_in_zip = path_in_zip.lstrip('/').lstrip('\\')
+                
+                zf.write(track.song_path, arcname=path_in_zip)
+    return actual_zip_path
 
 def trasform_sync_lyric(lyric):
     sync_array = []
@@ -369,3 +306,27 @@ def trasform_sync_lyric(lyric):
             arr = (a['line'], int(a['milliseconds']))
             sync_array.append(arr)
     return sync_array
+
+def save_cover_image(image_data: bytes, directory_path: str, cover_filename: str = "cover.jpg"):
+    if not image_data:
+        logger.warning(f"No image data provided to save cover in {directory_path}.")
+        return
+
+    if not isdir(directory_path):
+        # This case should ideally be handled by prior directory creation (e.g., __get_dir)
+        # but as a fallback, we can try to create it or log a warning.
+        logger.warning(f"Directory {directory_path} does not exist. Attempting to create it for cover image.")
+        try:
+            makedirs(directory_path, exist_ok=True)
+            logger.info(f"Created directory {directory_path} for cover image.")
+        except OSError as e:
+            logger.error(f"Failed to create directory {directory_path} for cover: {e}")
+            return
+
+    cover_path = join(directory_path, cover_filename)
+    try:
+        with open(cover_path, "wb") as f:
+            f.write(image_data)
+        logger.info(f"Successfully saved cover image to {cover_path}")
+    except OSError as e:
+        logger.error(f"Failed to save cover image to {cover_path}: {e}")

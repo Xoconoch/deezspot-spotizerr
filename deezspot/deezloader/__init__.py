@@ -39,7 +39,7 @@ from deezspot.libutils.others_settings import (
     stock_recursive_download,
     stock_not_interface,
     stock_zip,
-    method_save,
+    stock_save_cover,
 )
 from deezspot.libutils.logging_utils import ProgressReporter, logger
 
@@ -97,14 +97,14 @@ class DeeLogin:
         recursive_quality=stock_recursive_quality,
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Track:
 
         link_is_valid(link_track)
@@ -130,7 +130,6 @@ class DeeLogin:
         preferences.recursive_quality = recursive_quality
         preferences.recursive_download = recursive_download
         preferences.not_interface = not_interface
-        preferences.method_save = method_save
         # New custom formatting preferences:
         preferences.custom_dir_format = custom_dir_format
         preferences.custom_track_format = custom_track_format
@@ -142,6 +141,7 @@ class DeeLogin:
         preferences.max_retries = max_retries
         # Audio conversion parameter
         preferences.convert_to = convert_to
+        preferences.save_cover = save_cover
 
         track = DW_TRACK(preferences).dw()
 
@@ -155,14 +155,14 @@ class DeeLogin:
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
         make_zip=stock_zip,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Album:
 
         link_is_valid(link_album)
@@ -185,7 +185,6 @@ class DeeLogin:
         preferences.recursive_quality = recursive_quality
         preferences.recursive_download = recursive_download
         preferences.not_interface = not_interface
-        preferences.method_save = method_save
         preferences.make_zip = make_zip
         # New custom formatting preferences:
         preferences.custom_dir_format = custom_dir_format
@@ -198,6 +197,7 @@ class DeeLogin:
         preferences.max_retries = max_retries
         # Audio conversion parameter
         preferences.convert_to = convert_to
+        preferences.save_cover = save_cover
 
         album = DW_ALBUM(preferences).dw()
 
@@ -211,14 +211,14 @@ class DeeLogin:
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
         make_zip=stock_zip,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Playlist:
 
         link_is_valid(link_playlist)
@@ -251,7 +251,6 @@ class DeeLogin:
         preferences.recursive_quality = recursive_quality
         preferences.recursive_download = recursive_download
         preferences.not_interface = not_interface
-        preferences.method_save = method_save
         preferences.make_zip = make_zip
         # New custom formatting preferences:
         preferences.custom_dir_format = custom_dir_format
@@ -264,6 +263,7 @@ class DeeLogin:
         preferences.max_retries = max_retries
         # Audio conversion parameter
         preferences.convert_to = convert_to
+        preferences.save_cover = save_cover
 
         playlist = DW_PLAYLIST(preferences).dw()
 
@@ -276,11 +276,11 @@ class DeeLogin:
         recursive_quality=stock_recursive_quality,
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> list[Track]:
 
         link_is_valid(link_artist)
@@ -293,11 +293,11 @@ class DeeLogin:
                 track['link'], output_dir,
                 quality_download, recursive_quality,
                 recursive_download, not_interface,
-                method_save=method_save,
                 custom_dir_format=custom_dir_format,
                 custom_track_format=custom_track_format,
                 pad_tracks=pad_tracks,
-                convert_to=convert_to
+                convert_to=convert_to,
+                save_cover=save_cover
             )
             for track in playlist_json
         ]
@@ -332,14 +332,14 @@ class DeeLogin:
         recursive_quality=stock_recursive_quality,
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Track:
 
         track_link_dee = self.convert_spoty_to_dee_link_track(link_track)
@@ -351,14 +351,14 @@ class DeeLogin:
             recursive_quality=recursive_quality,
             recursive_download=recursive_download,
             not_interface=not_interface,
-            method_save=method_save,
             custom_dir_format=custom_dir_format,
             custom_track_format=custom_track_format,
             pad_tracks=pad_tracks,
             initial_retry_delay=initial_retry_delay,
             retry_delay_increase=retry_delay_increase,
             max_retries=max_retries,
-            convert_to=convert_to
+            convert_to=convert_to,
+            save_cover=save_cover
         )
 
         return track
@@ -450,14 +450,14 @@ class DeeLogin:
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
         make_zip=stock_zip,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Album:
 
         link_dee = self.convert_spoty_to_dee_link_album(link_album)
@@ -466,14 +466,15 @@ class DeeLogin:
             link_dee, output_dir,
             quality_download, recursive_quality,
             recursive_download, not_interface,
-            make_zip, method_save,
+            make_zip, 
             custom_dir_format=custom_dir_format,
             custom_track_format=custom_track_format,
             pad_tracks=pad_tracks,
             initial_retry_delay=initial_retry_delay,
             retry_delay_increase=retry_delay_increase,
             max_retries=max_retries,
-            convert_to=convert_to
+            convert_to=convert_to,
+            save_cover=save_cover
         )
 
         return album
@@ -486,14 +487,14 @@ class DeeLogin:
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
         make_zip=stock_zip,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Playlist:
 
         link_is_valid(link_playlist)
@@ -563,14 +564,14 @@ class DeeLogin:
                     recursive_quality=recursive_quality,
                     recursive_download=recursive_download,
                     not_interface=not_interface,
-                    method_save=method_save,
                     custom_dir_format=custom_dir_format,
                     custom_track_format=custom_track_format,
                     pad_tracks=pad_tracks,
                     initial_retry_delay=initial_retry_delay,
                     retry_delay_increase=retry_delay_increase,
                     max_retries=max_retries,
-                    convert_to=convert_to
+                    convert_to=convert_to,
+                    save_cover=save_cover
                 )
                 tracks.append(downloaded_track)
             except (TrackNotFound, NoDataApi) as e:
@@ -618,11 +619,14 @@ class DeeLogin:
         recursive_quality=stock_recursive_quality,
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
+        initial_retry_delay=30,
+        retry_delay_increase=30,
+        max_retries=5,
         pad_tracks=True,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Track:
 
         query = f"track:{song} artist:{artist}"
@@ -648,11 +652,14 @@ class DeeLogin:
             recursive_quality=recursive_quality,
             recursive_download=recursive_download,
             not_interface=not_interface,
-            method_save=method_save,
             custom_dir_format=custom_dir_format,
             custom_track_format=custom_track_format,
             pad_tracks=pad_tracks,
-            convert_to=convert_to
+            initial_retry_delay=initial_retry_delay,
+            retry_delay_increase=retry_delay_increase,
+            max_retries=max_retries,
+            convert_to=convert_to,
+            save_cover=save_cover
         )
 
         return track
@@ -665,14 +672,13 @@ class DeeLogin:
         recursive_quality=stock_recursive_quality,
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        save_cover=stock_save_cover
     ) -> Episode:
         
         link_is_valid(link_episode)
@@ -707,16 +713,8 @@ class DeeLogin:
         preferences.recursive_quality = recursive_quality
         preferences.recursive_download = recursive_download
         preferences.not_interface = not_interface
-        preferences.method_save = method_save
-        # New custom formatting preferences:
-        preferences.custom_dir_format = custom_dir_format
-        preferences.custom_track_format = custom_track_format
-        # Track number padding option
-        preferences.pad_tracks = pad_tracks
-        # Retry parameters
-        preferences.initial_retry_delay = initial_retry_delay
-        preferences.retry_delay_increase = retry_delay_increase
-        preferences.max_retries = max_retries
+        # No convert_to for episode download (and preferences.convert_to is not set here)
+        preferences.save_cover = save_cover
 
         episode = DW_EPISODE(preferences).dw()
 
@@ -730,13 +728,14 @@ class DeeLogin:
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
         make_zip=stock_zip,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
         initial_retry_delay=30,
         retry_delay_increase=30,
-        max_retries=5
+        max_retries=5,
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Smart:
 
         link_is_valid(link)
@@ -773,13 +772,14 @@ class DeeLogin:
                 recursive_quality=recursive_quality,
                 recursive_download=recursive_download,
                 not_interface=not_interface,
-                method_save=method_save,
                 custom_dir_format=custom_dir_format,
                 custom_track_format=custom_track_format,
                 pad_tracks=pad_tracks,
                 initial_retry_delay=initial_retry_delay,
                 retry_delay_increase=retry_delay_increase,
-                max_retries=max_retries
+                max_retries=max_retries,
+                convert_to=convert_to,
+                save_cover=save_cover
             )
             smart.type = "track"
             smart.track = track
@@ -800,13 +800,14 @@ class DeeLogin:
                 recursive_download=recursive_download,
                 not_interface=not_interface,
                 make_zip=make_zip,
-                method_save=method_save,
                 custom_dir_format=custom_dir_format,
                 custom_track_format=custom_track_format,
                 pad_tracks=pad_tracks,
                 initial_retry_delay=initial_retry_delay,
                 retry_delay_increase=retry_delay_increase,
-                max_retries=max_retries
+                max_retries=max_retries,
+                convert_to=convert_to,
+                save_cover=save_cover
             )
             smart.type = "album"
             smart.album = album
@@ -827,13 +828,14 @@ class DeeLogin:
                 recursive_download=recursive_download,
                 not_interface=not_interface,
                 make_zip=make_zip,
-                method_save=method_save,
                 custom_dir_format=custom_dir_format,
                 custom_track_format=custom_track_format,
                 pad_tracks=pad_tracks,
                 initial_retry_delay=initial_retry_delay,
                 retry_delay_increase=retry_delay_increase,
-                max_retries=max_retries
+                max_retries=max_retries,
+                convert_to=convert_to,
+                save_cover=save_cover
             )
             smart.type = "playlist"
             smart.playlist = playlist

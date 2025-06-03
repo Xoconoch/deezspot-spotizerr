@@ -11,7 +11,6 @@ class Preferences:
         self.recursive_quality = None
         self.recursive_download = None
         self.not_interface = None
-        self.method_save = None
         self.make_zip = None
         self.real_time_dl = None ,
         self.custom_dir_format = None,
@@ -20,3 +19,4 @@ class Preferences:
         self.initial_retry_delay = 30  # Default initial retry delay in seconds
         self.retry_delay_increase = 30  # Default increase in delay between retries in seconds
         self.max_retries = 5  # Default maximum number of retries per track
+        self.save_cover: bool = False # Option to save a cover.jpg image
