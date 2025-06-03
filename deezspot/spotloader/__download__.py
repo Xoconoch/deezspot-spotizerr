@@ -32,6 +32,8 @@ from deezspot.libutils.utils import (
     create_zip,
     request,
     sanitize_name,
+    save_cover_image,
+    __get_dir as get_album_directory,
 )
 from mutagen import File
 from mutagen.easyid3 import EasyID3
@@ -136,7 +138,6 @@ class EASY_DW:
         self.__ids = preferences.ids
         self.__link = preferences.link
         self.__output_dir = preferences.output_dir
-        self.__method_save = preferences.method_save
         self.__song_metadata = preferences.song_metadata
         self.__not_interface = preferences.not_interface
         self.__quality_download = preferences.quality_download or "NORMAL"
@@ -169,7 +170,6 @@ class EASY_DW:
             self.__output_dir,
             self.__song_quality,
             self.__file_format,
-            self.__method_save,
             custom_dir_format=custom_dir_format,
             custom_track_format=custom_track_format,
             pad_tracks=pad_tracks
@@ -184,7 +184,6 @@ class EASY_DW:
             self.__output_dir,
             self.__song_quality,
             self.__file_format,
-            self.__method_save,
             is_episode=True,
             custom_dir_format=custom_dir_format,
             custom_track_format=custom_track_format,
@@ -1004,29 +1003,37 @@ class EASY_DW:
         self.__write_episode()
         # Write metadata tags so subsequent skips work
         write_tags(self.__c_episode)
+
+        # Save episode cover image if download was successful
+        if self.__c_episode.success and hasattr(self.__c_episode, 'episode_path') and self.__c_episode.episode_path:
+            episode_directory = dirname(self.__c_episode.episode_path)
+            image_url = self.__song_metadata.get('image')
+            image_bytes = None
+            if image_url:
+                try:
+                    image_bytes = request(image_url).content
+                except Exception as e_img:
+                    logger.warning(f"Failed to fetch cover image for episode {self.__c_episode.tags.get('name', '')}: {e_img}")            
+            if image_bytes:
+                save_cover_image(image_bytes, episode_directory, "cover.jpg")
+
         return self.__c_episode
 
 def download_cli(preferences: Preferences) -> None:
     __link = preferences.link
     __output_dir = preferences.output_dir
-    __method_save = preferences.method_save
     __not_interface = preferences.not_interface
     __quality_download = preferences.quality_download
     __recursive_download = preferences.recursive_download
-    __recursive_quality = preferences.recursive_quality
     cmd = f"deez-dw.py -so spo -l \"{__link}\" "
     if __output_dir:
         cmd += f"-o {__output_dir} "
-    if __method_save:
-        cmd += f"-sa {__method_save} "
     if __not_interface:
         cmd += f"-g "
     if __quality_download:
         cmd += f"-q {__quality_download} "
     if __recursive_download:
         cmd += f"-rd "
-    if __recursive_quality:
-        cmd += f"-rq"
     system(cmd)
 
 class DW_TRACK:
@@ -1042,11 +1049,6 @@ class DW_TRACK:
         # it's an intentional skip, not an error
         return track
 
-    def dw2(self) -> Track:
-        track = EASY_DW(self.__preferences).get_no_dw_track()
-        download_cli(self.__preferences)
-        return track
-
 class DW_ALBUM:
     def __init__(
         self,
@@ -1056,7 +1058,6 @@ class DW_ALBUM:
         self.__ids = self.__preferences.ids
         self.__make_zip = self.__preferences.make_zip
         self.__output_dir = self.__preferences.output_dir
-        self.__method_save = self.__preferences.method_save
         self.__song_metadata = self.__preferences.song_metadata
         self.__not_interface = self.__preferences.not_interface
         self.__song_metadata_items = self.__song_metadata.items()
@@ -1098,17 +1099,26 @@ class DW_ALBUM:
             "url": f"https://open.spotify.com/album/{album_id}"
         })
         
-        pic = self.__song_metadata['image']
-        image = request(pic).content
-        self.__song_metadata['image'] = image
+        pic_url = self.__song_metadata['image'] # This is URL for spotify
+        image_bytes = request(pic_url).content
+        self.__song_metadata['image'] = image_bytes # Keep bytes for tagging
+        
         album = Album(self.__ids)
-        album.image = image
+        album.image = image_bytes # Store raw image bytes for cover saving
         album.nb_tracks = self.__song_metadata['nb_tracks']
         album.album_name = self.__song_metadata['album']
         album.upc = self.__song_metadata['upc']
         tracks = album.tracks
         album.md5_image = self.__ids
         album.tags = self.__song_metadata
+        
+        # Determine album base directory once
+        album_base_directory = get_album_directory(
+            self.__song_metadata, # Album level metadata
+            self.__output_dir,
+            custom_dir_format=self.__preferences.custom_dir_format,
+            pad_tracks=self.__preferences.pad_tracks
+        )
         
         c_song_metadata = {}
         for key, item in self.__song_metadata_items:
@@ -1147,6 +1157,11 @@ class DW_ALBUM:
                 track.error_message = f"An unexpected error occurred: {str(e_generic)}"
                 logger.error(f"Unexpected error downloading track '{song_name}' by '{artist_name}' from album '{album.album_name}'. Reason: {track.error_message}")
             tracks.append(track)
+
+        # Save album cover image
+        if album.image and album_base_directory:
+            save_cover_image(album.image, album_base_directory, "cover.jpg")
+
         if self.__make_zip:
             song_quality = tracks[0].quality
             custom_dir_format = getattr(self.__preferences, 'custom_dir_format', None)
@@ -1155,7 +1170,6 @@ class DW_ALBUM:
                 output_dir=self.__output_dir,
                 song_metadata=self.__song_metadata,
                 song_quality=song_quality,
-                method_save=self.__method_save,
                 custom_dir_format=custom_dir_format
             )
             album.zip_path = zip_name
@@ -1184,11 +1198,6 @@ class DW_ALBUM:
         })
         
         return album
-
-    def dw2(self) -> Album:
-        track = EASY_DW(self.__preferences).get_no_dw_track()
-        download_cli(self.__preferences)
-        return track
 
 class DW_PLAYLIST:
     def __init__(
@@ -1284,86 +1293,6 @@ class DW_PLAYLIST:
         
         return playlist
 
-    def dw2(self) -> Playlist:
-        # Extract playlist metadata for reporting
-        playlist_name = self.__json_data.get('name', 'Unknown Playlist')
-        playlist_owner = self.__json_data.get('owner', {}).get('display_name', 'Unknown Owner')
-        total_tracks = self.__json_data.get('tracks', {}).get('total', 'unknown')
-        playlist_id = self.__ids
-        
-        # Report playlist initializing status
-        Download_JOB.report_progress({
-            "type": "playlist",
-            "owner": playlist_owner,
-            "status": "initializing",
-            "total_tracks": total_tracks,
-            "name": playlist_name,
-            "url": f"https://open.spotify.com/playlist/{playlist_id}"
-        })
-        
-        playlist = Playlist()
-        tracks = playlist.tracks
-        for i, c_song_metadata in enumerate(self.__song_metadata):
-            if type(c_song_metadata) is str:
-                logger.warning(f"Track not found {c_song_metadata}")
-                continue
-            c_preferences = deepcopy(self.__preferences)
-            c_preferences.ids = c_song_metadata['ids']
-            c_preferences.song_metadata = c_song_metadata
-            c_preferences.json_data = self.__json_data  # Pass playlist data for reporting
-            c_preferences.track_number = i + 1  # Track number in the playlist
-
-            # Even though we're not downloading directly, we still need to set up the track object
-            track = EASY_DW(c_preferences, parent='playlist').get_no_dw_track()
-            if not track.success:
-                song = f"{c_song_metadata['music']} - {c_song_metadata['artist']}"
-                error_detail = getattr(track, 'error_message', 'Download failed for unspecified reason.')
-                logger.warning(f"Cannot download '{song}' (CLI mode). Reason: {error_detail} (Link: {track.link or c_preferences.link})")
-            tracks.append(track)
-            
-            # Track-level progress reporting using the standardized format
-            progress_data = {
-                "type": "track",
-                "song": c_song_metadata.get("music", ""),
-                "artist": c_song_metadata.get("artist", ""),
-                "status": "progress",
-                "current_track": i + 1,
-                "total_tracks": total_tracks,
-                "parent": {
-                    "type": "playlist",
-                    "name": playlist_name,
-                    "owner": self.__json_data.get('owner', {}).get('display_name', 'unknown'),
-                    "total_tracks": total_tracks,
-                    "url": f"https://open.spotify.com/playlist/{self.__json_data.get('id', '')}"
-                },
-                "url": f"https://open.spotify.com/track/{c_song_metadata['ids']}"
-            }
-            Download_JOB.report_progress(progress_data)
-        download_cli(self.__preferences)
-        
-        if self.__make_zip:
-            playlist_title = self.__json_data['name']
-            zip_name = f"{self.__output_dir}/{playlist_title} [playlist {self.__ids}]"
-            create_zip(tracks, zip_name=zip_name)
-            playlist.zip_path = zip_name
-            
-        # Report playlist done status
-        playlist_name = self.__json_data.get('name', 'Unknown Playlist')
-        playlist_owner = self.__json_data.get('owner', {}).get('display_name', 'Unknown Owner')
-        total_tracks = self.__json_data.get('tracks', {}).get('total', 0)
-        playlist_id = self.__ids
-        
-        Download_JOB.report_progress({
-            "type": "playlist",
-            "owner": playlist_owner,
-            "status": "done",
-            "total_tracks": total_tracks,
-            "name": playlist_name,
-            "url": f"https://open.spotify.com/playlist/{playlist_id}"
-        })
-        
-        return playlist
-
 class DW_EPISODE:
     def __init__(
         self,
@@ -1389,42 +1318,19 @@ class DW_EPISODE:
         
         episode = EASY_DW(self.__preferences).download_eps()
         
-        # Using standardized episode progress format
-        progress_data = {
-            "type": "episode",
-            "song": self.__preferences.song_metadata.get('name', 'Unknown Episode'),
-            "artist": self.__preferences.song_metadata.get('show', 'Unknown Show'),
-            "status": "done"
-        }
-        
-        # Set URL if available
-        episode_id = self.__preferences.ids
-        if episode_id:
-            progress_data["url"] = f"https://open.spotify.com/episode/{episode_id}"
-            
-        Download_JOB.report_progress(progress_data)
-        
-        return episode
+        # Save episode cover image if download was successful
+        if episode.success and hasattr(episode, 'episode_path') and episode.episode_path:
+            episode_directory = dirname(episode.episode_path)
+            image_url = self.__preferences.song_metadata.get('image')
+            image_bytes = None
+            if image_url:
+                try:
+                    image_bytes = request(image_url).content
+                except Exception as e_img:
+                    logger.warning(f"Failed to fetch cover image for episode {episode.tags.get('name', '')}: {e_img}")            
+            if image_bytes:
+                save_cover_image(image_bytes, episode_directory, "cover.jpg")
 
-    def dw2(self) -> Episode:
-        # Using standardized episode progress format
-        progress_data = {
-            "type": "episode",
-            "song": self.__preferences.song_metadata.get('name', 'Unknown Episode'),
-            "artist": self.__preferences.song_metadata.get('show', 'Unknown Show'),
-            "status": "initializing"
-        }
-        
-        # Set URL if available
-        episode_id = self.__preferences.ids
-        if episode_id:
-            progress_data["url"] = f"https://open.spotify.com/episode/{episode_id}"
-            
-        Download_JOB.report_progress(progress_data)
-        
-        episode = EASY_DW(self.__preferences).get_no_dw_track()
-        download_cli(self.__preferences)
-        
         # Using standardized episode progress format
         progress_data = {
             "type": "episode",

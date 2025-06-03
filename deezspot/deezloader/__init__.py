@@ -39,7 +39,7 @@ from deezspot.libutils.others_settings import (
     stock_recursive_download,
     stock_not_interface,
     stock_zip,
-    method_save,
+    stock_save_cover,
 )
 from deezspot.libutils.logging_utils import ProgressReporter, logger
 
@@ -97,7 +97,6 @@ class DeeLogin:
         recursive_quality=stock_recursive_quality,
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
@@ -130,7 +129,6 @@ class DeeLogin:
         preferences.recursive_quality = recursive_quality
         preferences.recursive_download = recursive_download
         preferences.not_interface = not_interface
-        preferences.method_save = method_save
         # New custom formatting preferences:
         preferences.custom_dir_format = custom_dir_format
         preferences.custom_track_format = custom_track_format
@@ -155,14 +153,14 @@ class DeeLogin:
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
         make_zip=stock_zip,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Album:
 
         link_is_valid(link_album)
@@ -185,7 +183,6 @@ class DeeLogin:
         preferences.recursive_quality = recursive_quality
         preferences.recursive_download = recursive_download
         preferences.not_interface = not_interface
-        preferences.method_save = method_save
         preferences.make_zip = make_zip
         # New custom formatting preferences:
         preferences.custom_dir_format = custom_dir_format
@@ -198,6 +195,7 @@ class DeeLogin:
         preferences.max_retries = max_retries
         # Audio conversion parameter
         preferences.convert_to = convert_to
+        preferences.save_cover = save_cover
 
         album = DW_ALBUM(preferences).dw()
 
@@ -211,7 +209,6 @@ class DeeLogin:
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
         make_zip=stock_zip,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
@@ -251,7 +248,6 @@ class DeeLogin:
         preferences.recursive_quality = recursive_quality
         preferences.recursive_download = recursive_download
         preferences.not_interface = not_interface
-        preferences.method_save = method_save
         preferences.make_zip = make_zip
         # New custom formatting preferences:
         preferences.custom_dir_format = custom_dir_format
@@ -276,7 +272,6 @@ class DeeLogin:
         recursive_quality=stock_recursive_quality,
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
@@ -293,7 +288,6 @@ class DeeLogin:
                 track['link'], output_dir,
                 quality_download, recursive_quality,
                 recursive_download, not_interface,
-                method_save=method_save,
                 custom_dir_format=custom_dir_format,
                 custom_track_format=custom_track_format,
                 pad_tracks=pad_tracks,
@@ -332,7 +326,6 @@ class DeeLogin:
         recursive_quality=stock_recursive_quality,
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
@@ -351,7 +344,6 @@ class DeeLogin:
             recursive_quality=recursive_quality,
             recursive_download=recursive_download,
             not_interface=not_interface,
-            method_save=method_save,
             custom_dir_format=custom_dir_format,
             custom_track_format=custom_track_format,
             pad_tracks=pad_tracks,
@@ -450,7 +442,6 @@ class DeeLogin:
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
         make_zip=stock_zip,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
@@ -466,7 +457,7 @@ class DeeLogin:
             link_dee, output_dir,
             quality_download, recursive_quality,
             recursive_download, not_interface,
-            make_zip, method_save,
+            make_zip, 
             custom_dir_format=custom_dir_format,
             custom_track_format=custom_track_format,
             pad_tracks=pad_tracks,
@@ -486,7 +477,6 @@ class DeeLogin:
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
         make_zip=stock_zip,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
@@ -563,7 +553,6 @@ class DeeLogin:
                     recursive_quality=recursive_quality,
                     recursive_download=recursive_download,
                     not_interface=not_interface,
-                    method_save=method_save,
                     custom_dir_format=custom_dir_format,
                     custom_track_format=custom_track_format,
                     pad_tracks=pad_tracks,
@@ -618,7 +607,6 @@ class DeeLogin:
         recursive_quality=stock_recursive_quality,
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
@@ -648,7 +636,6 @@ class DeeLogin:
             recursive_quality=recursive_quality,
             recursive_download=recursive_download,
             not_interface=not_interface,
-            method_save=method_save,
             custom_dir_format=custom_dir_format,
             custom_track_format=custom_track_format,
             pad_tracks=pad_tracks,
@@ -665,14 +652,14 @@ class DeeLogin:
         recursive_quality=stock_recursive_quality,
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Episode:
         
         link_is_valid(link_episode)
@@ -707,16 +694,8 @@ class DeeLogin:
         preferences.recursive_quality = recursive_quality
         preferences.recursive_download = recursive_download
         preferences.not_interface = not_interface
-        preferences.method_save = method_save
-        # New custom formatting preferences:
-        preferences.custom_dir_format = custom_dir_format
-        preferences.custom_track_format = custom_track_format
-        # Track number padding option
-        preferences.pad_tracks = pad_tracks
-        # Retry parameters
-        preferences.initial_retry_delay = initial_retry_delay
-        preferences.retry_delay_increase = retry_delay_increase
-        preferences.max_retries = max_retries
+        # No convert_to for episode download
+        preferences.save_cover = save_cover
 
         episode = DW_EPISODE(preferences).dw()
 
@@ -730,7 +709,6 @@ class DeeLogin:
         recursive_download=stock_recursive_download,
         not_interface=stock_not_interface,
         make_zip=stock_zip,
-        method_save=method_save,
         custom_dir_format=None,
         custom_track_format=None,
         pad_tracks=True,
@@ -773,7 +751,6 @@ class DeeLogin:
                 recursive_quality=recursive_quality,
                 recursive_download=recursive_download,
                 not_interface=not_interface,
-                method_save=method_save,
                 custom_dir_format=custom_dir_format,
                 custom_track_format=custom_track_format,
                 pad_tracks=pad_tracks,
@@ -800,7 +777,6 @@ class DeeLogin:
                 recursive_download=recursive_download,
                 not_interface=not_interface,
                 make_zip=make_zip,
-                method_save=method_save,
                 custom_dir_format=custom_dir_format,
                 custom_track_format=custom_track_format,
                 pad_tracks=pad_tracks,
@@ -827,7 +803,6 @@ class DeeLogin:
                 recursive_download=recursive_download,
                 not_interface=not_interface,
                 make_zip=make_zip,
-                method_save=method_save,
                 custom_dir_format=custom_dir_format,
                 custom_track_format=custom_track_format,
                 pad_tracks=pad_tracks,

@@ -115,45 +115,6 @@ def check_track_md5(infos_dw):
         logger.error(f"Failed to check track MD5: {str(e)}")
         raise
 
-def set_path(song_metadata, output_dir, method_save):
-    """
-    Set the output path for a track based on metadata and save method.
-    
-    Args:
-        song_metadata: Track metadata
-        output_dir: Base output directory
-        method_save: Save method (e.g., 'artist/album/track')
-        
-    Returns:
-        str: Full output path
-    """
-    try:
-        # Create base directory if it doesn't exist
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Build path based on method
-        if method_save == 'artist/album/track':
-            path = os.path.join(
-                output_dir,
-                song_metadata['artist'],
-                song_metadata['album'],
-                f"{song_metadata['music']}.mp3"
-            )
-        else:
-            path = os.path.join(
-                output_dir,
-                f"{song_metadata['artist']} - {song_metadata['music']}.mp3"
-            )
-            
-        # Create parent directories
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        
-        return path
-        
-    except Exception as e:
-        logger.error(f"Failed to set path: {str(e)}")
-        raise
-
 def trasform_sync_lyric(lyrics):
     """
     Transform synchronized lyrics into a standard format.

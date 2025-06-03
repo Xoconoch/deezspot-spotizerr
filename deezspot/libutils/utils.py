@@ -203,7 +203,6 @@ def set_path(
     pad_tracks=True
 ):
     # Determine the directory for the song
-    # method_save is removed, __get_dir now only relies on custom_dir_format
     directory = __get_dir(
         song_metadata,
         output_dir,
@@ -306,3 +305,27 @@ def trasform_sync_lyric(lyric):
             arr = (a['line'], int(a['milliseconds']))
             sync_array.append(arr)
     return sync_array
+
+def save_cover_image(image_data: bytes, directory_path: str, cover_filename: str = "cover.jpg"):
+    if not image_data:
+        logger.warning(f"No image data provided to save cover in {directory_path}.")
+        return
+
+    if not isdir(directory_path):
+        # This case should ideally be handled by prior directory creation (e.g., __get_dir)
+        # but as a fallback, we can try to create it or log a warning.
+        logger.warning(f"Directory {directory_path} does not exist. Attempting to create it for cover image.")
+        try:
+            makedirs(directory_path, exist_ok=True)
+            logger.info(f"Created directory {directory_path} for cover image.")
+        except OSError as e:
+            logger.error(f"Failed to create directory {directory_path} for cover: {e}")
+            return
+
+    cover_path = join(directory_path, cover_filename)
+    try:
+        with open(cover_path, "wb") as f:
+            f.write(image_data)
+        logger.info(f"Successfully saved cover image to {cover_path}")
+    except OSError as e:
+        logger.error(f"Failed to save cover image to {cover_path}: {e}")

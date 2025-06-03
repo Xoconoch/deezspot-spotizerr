@@ -33,6 +33,8 @@ from deezspot.libutils.utils import (
     trasform_sync_lyric,
     create_zip,
     sanitize_name,
+    save_cover_image,
+    __get_dir as get_album_directory,
 )
 from mutagen.flac import FLAC
 from mutagen.mp3 import MP3
@@ -192,7 +194,6 @@ class EASY_DW:
         self.__ids = preferences.ids
         self.__link = preferences.link
         self.__output_dir = preferences.output_dir
-        self.__method_save = preferences.method_save
         self.__not_interface = preferences.not_interface
         self.__quality_download = preferences.quality_download
         self.__recursive_quality = preferences.recursive_quality
@@ -277,7 +278,6 @@ class EASY_DW:
             self.__output_dir,
             self.__song_quality,
             self.__file_format,
-            self.__method_save,
             custom_dir_format=custom_dir_format,
             custom_track_format=custom_track_format,
             pad_tracks=pad_tracks
@@ -292,7 +292,6 @@ class EASY_DW:
             self.__output_dir,
             self.__song_quality,
             self.__file_format,
-            self.__method_save,
             is_episode=True,
             custom_dir_format=custom_dir_format,
             custom_track_format=custom_track_format,
@@ -915,10 +914,9 @@ class DW_ALBUM:
         self.__ids = self.__preferences.ids
         self.__make_zip = self.__preferences.make_zip
         self.__output_dir = self.__preferences.output_dir
-        self.__method_save = self.__preferences.method_save
-        self.__song_metadata = self.__preferences.song_metadata
         self.__not_interface = self.__preferences.not_interface
         self.__quality_download = self.__preferences.quality_download
+        self.__recursive_quality = self.__preferences.recursive_quality
 
         self.__song_metadata_items = self.__song_metadata.items()
 
@@ -966,11 +964,11 @@ class DW_ALBUM:
         infos_dw = API_GW.get_album_data(self.__ids)['data']
 
         md5_image = infos_dw[0]['ALB_PICTURE']
-        image = API.choose_img(md5_image)
-        self.__song_metadata['image'] = image
+        image_bytes = API.choose_img(md5_image, size="1400x1400") # Fetch highest quality
+        self.__song_metadata['image'] = image_bytes # Store for tagging if needed, already bytes
 
         album = Album(self.__ids)
-        album.image = image
+        album.image = image_bytes # Store raw image bytes
         album.md5_image = md5_image
         album.nb_tracks = self.__song_metadata['nb_tracks']
         album.album_name = self.__song_metadata['album']
@@ -983,7 +981,13 @@ class DW_ALBUM:
             infos_dw, self.__quality_download
         )
         
-        # The album_artist for tagging individual tracks will be derived_album_artist_from_contributors
+        # Determine album base directory once
+        album_base_directory = get_album_directory(
+            self.__song_metadata, # Album level metadata
+            self.__output_dir,
+            custom_dir_format=self.__preferences.custom_dir_format,
+            pad_tracks=self.__preferences.pad_tracks
+        )
         
         total_tracks = len(infos_dw)
         for a in range(total_tracks):
@@ -1074,6 +1078,10 @@ class DW_ALBUM:
                     logger.warning(f"Track not found: {song} :( Details: {track.error_message}. URL: {c_preferences.link if c_preferences else 'N/A'}")
             tracks.append(track)
 
+        # Save album cover image
+        if album.image and album_base_directory:
+            save_cover_image(album.image, album_base_directory, "cover.jpg")
+
         if self.__make_zip:
             song_quality = tracks[0].quality if tracks else 'Unknown'
             # Pass along custom directory format if set
@@ -1083,7 +1091,6 @@ class DW_ALBUM:
                 output_dir=self.__output_dir,
                 song_metadata=self.__song_metadata,
                 song_quality=song_quality,
-                method_save=self.__method_save,
                 custom_dir_format=custom_dir_format
             )
             album.zip_path = zip_name
@@ -1226,7 +1233,6 @@ class DW_EPISODE:
         self.__preferences = preferences
         self.__ids = preferences.ids
         self.__output_dir = preferences.output_dir
-        self.__method_save = preferences.method_save
         self.__not_interface = preferences.not_interface
         self.__quality_download = preferences.quality_download
         
@@ -1335,6 +1341,16 @@ class DW_EPISODE:
             }
             Download_JOB.report_progress(progress_data)
             
+            # Save cover image for the episode
+            episode_image_md5 = infos_dw.get('EPISODE_IMAGE_MD5', '')
+            episode_image_data = None
+            if episode_image_md5:
+                episode_image_data = API.choose_img(episode_image_md5, size="1200x1200")
+            
+            if episode_image_data:
+                episode_directory = os.path.dirname(output_path)
+                save_cover_image(episode_image_data, episode_directory, "cover.jpg")
+
             return episode
             
         except Exception as e:
