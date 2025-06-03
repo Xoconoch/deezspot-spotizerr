@@ -1,6 +1,7 @@
+import os
 from mutagen.flac import FLAC
 from mutagen.mp3 import MP3
-from mutagen.id3 import ID3
+from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, TCON, TRCK, TPOS, TSRC, TPE2, TCOM, USLT, TPUB, COMM, TCOP, TENC, TLAN, TYER, TXXX
 from mutagen.mp4 import MP4
 from mutagen import File
 from deezspot.libutils.logging_utils import logger
@@ -83,6 +84,34 @@ def write_tags(track):
                         id3.add(TCOM(encoding=3, text=value))
                     elif key == 'lyrics':
                         id3.add(USLT(encoding=3, lang='eng', desc='', text=value))
+                    elif key == 'publisher':
+                        id3.add(TPUB(encoding=3, text=value))
+                    elif key == 'comment':
+                        id3.add(COMM(encoding=3, lang='eng', desc='', text=value))
+                    elif key == 'copyright':
+                        id3.add(TCOP(encoding=3, text=value))
+                    elif key == 'encodedby':
+                        id3.add(TENC(encoding=3, text=value))
+                    elif key == 'language':
+                        id3.add(TLAN(encoding=3, text=value))
+                    elif key == 'year' and not metadata.get('date'):
+                        id3.add(TYER(encoding=3, text=value))
+                    elif key == 'mood':
+                        id3.add(TXXX(encoding=3, desc='MOOD', text=value))
+                    elif key == 'explicit':
+                        id3.add(TXXX(encoding=3, desc='EXPLICIT', text=value))
+                    elif key == 'rating':
+                        id3.add(TXXX(encoding=3, desc='RATING', text=value))
+                    elif key == 'website':
+                        id3.add(TXXX(encoding=3, desc='WEBSITE', text=value))
+                    elif key == 'replaygain_track_gain':
+                        id3.add(TXXX(encoding=3, desc='REPLAYGAIN_TRACK_GAIN', text=value))
+                    elif key == 'replaygain_track_peak':
+                        id3.add(TXXX(encoding=3, desc='REPLAYGAIN_TRACK_PEAK', text=value))
+                    elif key == 'replaygain_album_gain':
+                        id3.add(TXXX(encoding=3, desc='REPLAYGAIN_ALBUM_GAIN', text=value))
+                    elif key == 'replaygain_album_peak':
+                        id3.add(TXXX(encoding=3, desc='REPLAYGAIN_ALBUM_PEAK', text=value))
                         
             audio.tags = id3
             
@@ -101,9 +130,15 @@ def write_tags(track):
                     elif key == 'genre':
                         audio['\xa9gen'] = value
                     elif key == 'tracknumber':
-                        audio['trkn'] = [(int(value.split('/')[0]), int(value.split('/')[1]))]
+                        parts = str(value).split('/')
+                        track_num = int(parts[0])
+                        total_tracks = int(parts[1]) if len(parts) > 1 else 0
+                        audio['trkn'] = [(track_num, total_tracks)]
                     elif key == 'discnumber':
-                        audio['disk'] = [(int(value.split('/')[0]), int(value.split('/')[1]))]
+                        parts = str(value).split('/')
+                        disc_num = int(parts[0])
+                        total_discs = int(parts[1]) if len(parts) > 1 else 0
+                        audio['disk'] = [(disc_num, total_discs)]
                     elif key == 'isrc':
                         audio['isrc'] = value
                     elif key == 'albumartist':
@@ -112,6 +147,20 @@ def write_tags(track):
                         audio['\xa9wrt'] = value
                     elif key == 'lyrics':
                         audio['\xa9lyr'] = value
+                    elif key == 'publisher':
+                        audio['\xa9pub'] = value
+                    elif key == 'comment':
+                        audio['\xa9cmt'] = value
+                    elif key == 'copyright':
+                        audio['\xa9cpy'] = value
+                    elif key == 'encodedby':
+                        audio['\xa9too'] = value
+                    elif key == 'explicit':
+                        if value == '1': # True for explicit
+                            audio['rtng'] = [4] # Explicit for iTunes
+                        elif value == '0': # False for explicit
+                            audio['rtng'] = [0] # None
+                        # else: do not set rtng if value is not '0' or '1'
                         
         # Save the changes
         audio.save()

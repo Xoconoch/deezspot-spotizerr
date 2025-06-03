@@ -621,6 +621,9 @@ class DeeLogin:
         not_interface=stock_not_interface,
         custom_dir_format=None,
         custom_track_format=None,
+        initial_retry_delay=30,
+        retry_delay_increase=30,
+        max_retries=5,
         pad_tracks=True,
         convert_to=None,
         save_cover=stock_save_cover
@@ -675,7 +678,6 @@ class DeeLogin:
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None,
         save_cover=stock_save_cover
     ) -> Episode:
         
@@ -711,7 +713,7 @@ class DeeLogin:
         preferences.recursive_quality = recursive_quality
         preferences.recursive_download = recursive_download
         preferences.not_interface = not_interface
-        # No convert_to for episode download
+        # No convert_to for episode download (and preferences.convert_to is not set here)
         preferences.save_cover = save_cover
 
         episode = DW_EPISODE(preferences).dw()
@@ -732,6 +734,7 @@ class DeeLogin:
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
+        convert_to=None,
         save_cover=stock_save_cover
     ) -> Smart:
 
@@ -775,6 +778,7 @@ class DeeLogin:
                 initial_retry_delay=initial_retry_delay,
                 retry_delay_increase=retry_delay_increase,
                 max_retries=max_retries,
+                convert_to=convert_to,
                 save_cover=save_cover
             )
             smart.type = "track"
