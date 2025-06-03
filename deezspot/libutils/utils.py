@@ -9,6 +9,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 from deezspot.models.track import Track
 from deezspot.exceptions import InvalidLink
 from deezspot.libutils.others_settings import supported_link, header
+from deezspot.libutils.logging_utils import ProgressReporter, logger
 
 from os.path import (
     isdir, basename,

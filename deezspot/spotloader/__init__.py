@@ -96,7 +96,8 @@ class SpoLogin:
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
-        convert_to=None
+        convert_to=None,
+        save_cover=stock_save_cover
     ) -> Track:
         try:
             link_is_valid(link_track)
@@ -123,6 +124,7 @@ class SpoLogin:
             preferences.retry_delay_increase = retry_delay_increase
             preferences.max_retries = max_retries
             preferences.convert_to = convert_to
+            preferences.save_cover = save_cover
 
             track = DW_TRACK(preferences).dw()
 
@@ -422,7 +424,8 @@ class SpoLogin:
                     pad_tracks=pad_tracks,
                     initial_retry_delay=initial_retry_delay,
                     retry_delay_increase=retry_delay_increase,
-                    max_retries=max_retries
+                    max_retries=max_retries,
+                    save_cover=save_cover
                 )
                 smart.type = "track"
                 smart.track = track

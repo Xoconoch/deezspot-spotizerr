@@ -346,7 +346,7 @@ class EASY_DW:
         if hasattr(self, '_EASY_DW__c_track') and self.__c_track and self.__c_track.success:
             write_tags(self.__c_track)
         
-        return self.__c_track # Return the track object
+        return self.__c_track
 
     def track_exists(self, title, album):
         try:
@@ -691,6 +691,16 @@ class EASY_DW:
                 time.sleep(retry_delay)
                 retry_delay += retry_delay_increase  # Use the custom retry delay increase
                 
+        # Save cover image if requested, after successful download and before conversion
+        if self.__preferences.save_cover and hasattr(self, '_EASY_DW__song_path') and self.__song_path and self.__song_metadata.get('image'):
+            try:
+                track_directory = dirname(self.__song_path)
+                # Ensure the directory exists (it should, from os.makedirs earlier)
+                save_cover_image(self.__song_metadata['image'], track_directory, "cover.jpg")
+                logger.info(f"Saved cover image for track in {track_directory}")
+            except Exception as e_img_save:
+                logger.warning(f"Failed to save cover image for track: {e_img_save}")
+
         try:
             self.__convert_audio()
         except Exception as e:
@@ -1027,22 +1037,8 @@ class EASY_DW:
                 self.__c_episode.error_message = error_message
                 raise TrackNotFound(message=error_message, url=self.__link) from conv_e
                 
-        self.__write_episode()
         # Write metadata tags so subsequent skips work
         write_tags(self.__c_episode)
-
-        # Save episode cover image if download was successful
-        if self.__c_episode.success and hasattr(self.__c_episode, 'episode_path') and self.__c_episode.episode_path:
-            episode_directory = dirname(self.__c_episode.episode_path)
-            image_url = self.__song_metadata.get('image')
-            image_bytes = None
-            if image_url:
-                try:
-                    image_bytes = request(image_url).content
-                except Exception as e_img:
-                    logger.warning(f"Failed to fetch cover image for episode {self.__c_episode.tags.get('name', '')}: {e_img}")            
-            if image_bytes:
-                save_cover_image(image_bytes, episode_directory, "cover.jpg")
 
         return self.__c_episode
 
@@ -1186,7 +1182,7 @@ class DW_ALBUM:
             tracks.append(track)
 
         # Save album cover image
-        if album.image and album_base_directory:
+        if self.__preferences.save_cover and album.image and album_base_directory:
             save_cover_image(album.image, album_base_directory, "cover.jpg")
 
         if self.__make_zip:
@@ -1345,19 +1341,6 @@ class DW_EPISODE:
         
         episode = EASY_DW(self.__preferences).download_eps()
         
-        # Save episode cover image if download was successful
-        if episode.success and hasattr(episode, 'episode_path') and episode.episode_path:
-            episode_directory = dirname(episode.episode_path)
-            image_url = self.__preferences.song_metadata.get('image')
-            image_bytes = None
-            if image_url:
-                try:
-                    image_bytes = request(image_url).content
-                except Exception as e_img:
-                    logger.warning(f"Failed to fetch cover image for episode {episode.tags.get('name', '')}: {e_img}")            
-            if image_bytes:
-                save_cover_image(image_bytes, episode_directory, "cover.jpg")
-
         # Using standardized episode progress format
         progress_data = {
             "type": "episode",
