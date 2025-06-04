@@ -2,6 +2,7 @@
 
 from time import sleep
 from datetime import datetime
+from typing import Union
 from deezspot.deezloader.__utils__ import artist_sort
 from requests import get as req_get
 from deezspot.libutils.utils import convert_to_date
@@ -12,6 +13,7 @@ from deezspot.exceptions import (
     TrackNotFound,
 )
 from deezspot.libutils.logging_utils import logger
+import requests
 
 class API:
 
@@ -282,7 +284,7 @@ class API:
 	def tracking_album(cls, album_json):
 		song_metadata: dict[
 			str,
-			list or str or int or datetime
+			Union[list, str, int, datetime]
 		] = {
 			"music": [],
 			"artist": [],
