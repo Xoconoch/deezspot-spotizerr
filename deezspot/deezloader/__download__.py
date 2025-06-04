@@ -948,6 +948,7 @@ class DW_ALBUM:
         self.__not_interface = self.__preferences.not_interface
         self.__quality_download = self.__preferences.quality_download
         self.__recursive_quality = self.__preferences.recursive_quality
+        self.__song_metadata = self.__preferences.song_metadata
 
         self.__song_metadata_items = self.__song_metadata.items()
 
