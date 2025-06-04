@@ -215,28 +215,29 @@ def set_path(
     # Default track format if no custom one is provided
     if custom_track_format is None:
         if is_episode:
-            # Default for episodes: %title%
-            # Episodes usually don't have artist/album context in the same way tracks do.
-            # Their 'album' is the show name, and 'artist' is the publisher.
+            # Default for episodes: %music%
             custom_track_format = "%music%"
         else:
-            # Default for tracks: %artist% - %title%
+            # Default for tracks: %artist% - %music%
             custom_track_format = "%artist% - %music%"
     
+    # Prepare metadata for formatting, including quality if available
+    effective_metadata = dict(song_metadata) # Create a mutable copy
+    if song_quality:
+        effective_metadata['quality'] = f"[{song_quality}]"
+    # else: if song_quality is None or empty, 'quality' won't be in effective_metadata,
+    # so %quality% placeholder will be replaced by an empty string by apply_custom_format.
+
     # Apply the custom format string for the track filename.
     # pad_tracks is passed along for track/disc numbers in filename.
-    track_filename_base = apply_custom_format(custom_track_format, song_metadata, pad_tracks)
+    track_filename_base = apply_custom_format(custom_track_format, effective_metadata, pad_tracks)
     track_filename_base = sanitize_name(track_filename_base)
 
-    # Add quality and file format to the filename
-    if song_quality and file_format:
-        # Ensure file_format starts with a dot
-        ext = file_format if file_format.startswith('.') else f".{file_format}"
-        filename = f"{track_filename_base} [{song_quality}]{ext}"
-    elif file_format: # Only file_format provided
+    # Add file format (extension) to the filename
+    if file_format:
         ext = file_format if file_format.startswith('.') else f".{file_format}"
         filename = f"{track_filename_base}{ext}"
-    else: # Neither provided (should not happen for standard audio)
+    else: # No file_format provided (should not happen for standard audio, but handle defensively)
         filename = track_filename_base
 
     return join(directory, filename)
