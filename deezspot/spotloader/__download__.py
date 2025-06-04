@@ -1077,58 +1077,37 @@ class DW_ALBUM:
         
         c_song_metadata = {}
         for key, item in self.__song_metadata_items:
-            if type(item) is not list:
-                c_song_metadata[key] = item # Corrected: use item directly
+            if key == 'popularity_list':
+                continue
+            if not isinstance(item, list): # Changed from type() to isinstance()
+                c_song_metadata[key] = item # Use item directly (it's self.__song_metadata[key])
         total_tracks = album.nb_tracks
         for a in range(total_tracks):
-            # c_song_metadata starts with album-wide values.
-            # For each track 'a', list-based values for that track 'a' are updated.
-            # A copy is made later for c_preferences.song_metadata.
-            for key, item in self.__song_metadata_items: # item is self.__song_metadata[key]
-                if type(item) is list:
-                    if a < len(item): # Check bounds for 'item' (which is the list)
-                        c_song_metadata[key] = item[a] # Access element from 'item'
+            for key, metadata_value_for_key in self.__song_metadata_items: # metadata_value_for_key is self.__song_metadata[key]
+                if isinstance(metadata_value_for_key, list): # Changed from type() is list to isinstance()
+                    if key == 'popularity_list':
+                        continue
+                    if a < len(metadata_value_for_key):
+                        c_song_metadata[key] = metadata_value_for_key[a]
                     else:
-                        # Data for this key is missing for track 'a'
+                        # Log a warning because a per-track list is shorter than expected.
+                        # This was causing the IndexError.
+                        album_name_for_log = c_song_metadata.get('album', self.__song_metadata.get('album', 'Unknown Album'))
                         logger.warning(
-                            f"Metadata mismatch in album '{self.__song_metadata.get('album', 'Unknown Album')}'. "
-                            f"Key '{key}' has a list of {len(item)} items, "
-                            f"but trying to access index {a} for track {a+1}/{total_tracks}. "
-                            f"Setting value to None for this track."
+                            f"In album '{album_name_for_log}', metadata list for key '{key}' is too short. "
+                            f"Expected at least {a + 1} elements for track {a + 1}/{total_tracks} "
+                            f"(list has {len(metadata_value_for_key)}). Assigning None to '{key}' for this track."
                         )
-                        c_song_metadata[key] = None # Provide a fallback
-                        if key == 'ids':
-                            logger.error(
-                                f"Critical 'ids' metadata for track {a+1} in album "
-                                f"'{self.__song_metadata.get('album', 'Unknown Album')}' "
-                                f"is missing due to list length mismatch. This track will likely fail."
-                            )
-            
-            song_name = c_song_metadata.get('music')
-            artist_name = c_song_metadata.get('artist')
-            album_name = c_song_metadata.get('album')
+                        c_song_metadata[key] = None
+            song_name = c_song_metadata['music']
+            artist_name = c_song_metadata['artist']
+            album_name = c_song_metadata['album']
             current_track = a + 1
             
             c_preferences = deepcopy(self.__preferences)
-            c_preferences.song_metadata = c_song_metadata.copy() # Use a copy for this track's preferences
-            c_preferences.ids = c_song_metadata.get('ids') # Get the 'ids' for current track 'a'
+            c_preferences.song_metadata = c_song_metadata.copy()
+            c_preferences.ids = c_song_metadata['ids']
             c_preferences.track_number = current_track  # Track number in the album
-
-            if c_preferences.ids is None:
-                logger.error(
-                    f"Skipping track {current_track} ('{song_name}') from album '{album_name}' "
-                    f"because its ID is missing due to inconsistent album metadata (list length mismatch for 'ids' key)."
-                )
-                error_track_metadata = c_song_metadata.copy()
-                error_track = Track(error_track_metadata, None, None, None, None, None)
-                error_track.success = False
-                error_track.error_message = (
-                    f"Track ID missing for track {current_track} ('{song_name}') in album "
-                    f"'{album_name}' due to metadata list length mismatch."
-                )
-                tracks.append(error_track)
-                continue
-
             c_preferences.link = f"https://open.spotify.com/track/{c_preferences.ids}"
             
             # Add album_id to song metadata for consistent parent info
@@ -1136,14 +1115,14 @@ class DW_ALBUM:
             
             try:
                 # Use track-level reporting through EASY_DW
-                track = EASY_DW(c_preferences, parent='album').easy_dw()
+                track = EASY_DW(c_preferences, parent='album').download_try()
             except TrackNotFound as e_track:
-                track = Track(c_song_metadata.copy(), None, None, None, None, None) # Use a copy of metadata for this track
+                track = Track(c_song_metadata, None, None, None, None, None)
                 track.success = False
                 track.error_message = str(e_track) # Store the error message from TrackNotFound
                 logger.warning(f"Track '{song_name}' by '{artist_name}' from album '{album.album_name}' not found or failed to download. Reason: {track.error_message}")
             except Exception as e_generic:
-                track = Track(c_song_metadata.copy(), None, None, None, None, None) # Use a copy of metadata for this track
+                track = Track(c_song_metadata, None, None, None, None, None)
                 track.success = False
                 track.error_message = f"An unexpected error occurred: {str(e_generic)}"
                 logger.error(f"Unexpected error downloading track '{song_name}' by '{artist_name}' from album '{album.album_name}'. Reason: {track.error_message}")
