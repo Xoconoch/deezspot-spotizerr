@@ -15,6 +15,7 @@ AUDIO_FORMATS = {
         "extension": ".mp3",
         "mime": "audio/mpeg",
         "ffmpeg_codec": "libmp3lame",
+        "ffmpeg_format_flag": "mp3",
         "default_bitrate": "320k",
         "bitrates": ["32k", "64k", "96k", "128k", "192k", "256k", "320k"],
     },
@@ -22,6 +23,7 @@ AUDIO_FORMATS = {
         "extension": ".m4a",
         "mime": "audio/mp4",
         "ffmpeg_codec": "aac",
+        "ffmpeg_format_flag": "ipod",
         "default_bitrate": "256k",
         "bitrates": ["32k", "64k", "96k", "128k", "192k", "256k"],
     },
@@ -29,6 +31,7 @@ AUDIO_FORMATS = {
         "extension": ".ogg",
         "mime": "audio/ogg",
         "ffmpeg_codec": "libvorbis",
+        "ffmpeg_format_flag": "ogg",
         "default_bitrate": "256k",
         "bitrates": ["64k", "96k", "128k", "192k", "256k", "320k"],
     },
@@ -36,6 +39,7 @@ AUDIO_FORMATS = {
         "extension": ".opus",
         "mime": "audio/opus",
         "ffmpeg_codec": "libopus",
+        "ffmpeg_format_flag": "opus",
         "default_bitrate": "128k",
         "bitrates": ["32k", "64k", "96k", "128k", "192k", "256k"],
     },
@@ -43,6 +47,7 @@ AUDIO_FORMATS = {
         "extension": ".flac",
         "mime": "audio/flac",
         "ffmpeg_codec": "flac",
+        "ffmpeg_format_flag": "flac",
         "default_bitrate": None,  # Lossless, no bitrate needed
         "bitrates": [],
     },
@@ -50,6 +55,7 @@ AUDIO_FORMATS = {
         "extension": ".wav",
         "mime": "audio/wav",
         "ffmpeg_codec": "pcm_s16le",
+        "ffmpeg_format_flag": "wav",
         "default_bitrate": None,  # Lossless, no bitrate needed
         "bitrates": [],
     },
@@ -57,6 +63,7 @@ AUDIO_FORMATS = {
         "extension": ".m4a",
         "mime": "audio/mp4",
         "ffmpeg_codec": "alac",
+        "ffmpeg_format_flag": "ipod",
         "default_bitrate": None,  # Lossless, no bitrate needed
         "bitrates": [],
     }
@@ -68,50 +75,6 @@ def check_ffmpeg_available():
         logger.error("FFmpeg is not installed or not in PATH. Audio conversion is unavailable.")
         return False
     return True
-
-def parse_format_string(format_string):
-    """
-    Parse a format string like "MP3_320" into (format, bitrate).
-    Returns (format_name, bitrate) or (None, None) if invalid.
-    """
-    if not format_string or format_string.lower() == "false":
-        return None, None
-        
-    # Check for format with bitrate specification
-    format_match = re.match(r"^([A-Za-z]+)(?:_(\d+[kK]))?$", format_string)
-    if format_match:
-        format_name = format_match.group(1).upper()
-        bitrate = format_match.group(2)
-        
-        # Validate format name
-        if format_name not in AUDIO_FORMATS:
-            logger.warning(f"Unknown audio format: {format_name}. Using original format.")
-            return None, None
-            
-        # If format is lossless but bitrate was specified, log a warning
-        if bitrate and AUDIO_FORMATS[format_name]["default_bitrate"] is None:
-            logger.warning(f"Bitrate specified for lossless format {format_name}. Ignoring bitrate.")
-            bitrate = None
-            
-        # If bitrate wasn't specified, use default
-        if not bitrate and AUDIO_FORMATS[format_name]["default_bitrate"]:
-            bitrate = AUDIO_FORMATS[format_name]["default_bitrate"]
-            
-        # Validate bitrate if specified
-        if bitrate and AUDIO_FORMATS[format_name]["bitrates"] and bitrate.lower() not in [b.lower() for b in AUDIO_FORMATS[format_name]["bitrates"]]:
-            logger.warning(f"Invalid bitrate {bitrate} for {format_name}. Using default {AUDIO_FORMATS[format_name]['default_bitrate']}.")
-            bitrate = AUDIO_FORMATS[format_name]["default_bitrate"]
-            
-        return format_name, bitrate
-        
-    # Simple format name without bitrate
-    if format_string.upper() in AUDIO_FORMATS:
-        format_name = format_string.upper()
-        bitrate = AUDIO_FORMATS[format_name]["default_bitrate"]
-        return format_name, bitrate
-        
-    logger.warning(f"Invalid format specification: {format_string}. Using original format.")
-    return None, None
 
 def get_output_path(input_path, format_name):
     """Get the output path with the new extension based on the format."""
@@ -155,7 +118,7 @@ def convert_audio(input_path, format_name=None, bitrate=None, register_func=None
     Args:
         input_path: Path to the input audio file
         format_name: Target format name (e.g., 'MP3', 'OGG', 'FLAC')
-        bitrate: Target bitrate (e.g., '320k', '128k')
+        bitrate: Target bitrate (e.g., '320k', '128k'). If None, uses default for lossy formats.
         register_func: Function to register a file as being actively downloaded
         unregister_func: Function to unregister a file from the active downloads list
         
@@ -176,21 +139,45 @@ def convert_audio(input_path, format_name=None, bitrate=None, register_func=None
         return input_path
         
     # Validate format and get format details
-    if format_name not in AUDIO_FORMATS:
+    format_name_upper = format_name.upper()
+    if format_name_upper not in AUDIO_FORMATS:
         logger.warning(f"Unknown format: {format_name}. Using original format.")
         return input_path
         
-    format_details = AUDIO_FORMATS[format_name]
+    format_details = AUDIO_FORMATS[format_name_upper]
     
-    # Skip conversion if the file is already in the target format
+    # Determine effective bitrate
+    effective_bitrate = bitrate
+    if format_details["default_bitrate"] is not None: # Lossy format
+        if effective_bitrate:
+            # Validate provided bitrate
+            if effective_bitrate.lower() not in [b.lower() for b in format_details["bitrates"]]:
+                logger.warning(f"Invalid bitrate {effective_bitrate} for {format_name_upper}. Using default {format_details['default_bitrate']}.")
+                effective_bitrate = format_details["default_bitrate"]
+        else: # No bitrate provided for lossy format, use default
+            effective_bitrate = format_details["default_bitrate"]
+    elif effective_bitrate: # Lossless format but bitrate was specified
+        logger.warning(f"Bitrate specified for lossless format {format_name_upper}. Ignoring bitrate.")
+        effective_bitrate = None
+
+    # Skip conversion if the file is already in the target format and bitrate matches (or not applicable)
     if input_path.lower().endswith(format_details["extension"].lower()):
-        # Only do conversion if a specific bitrate is requested
-        if not bitrate or format_details["default_bitrate"] is None:
-            logger.info(f"File {input_path} is already in {format_name} format. Skipping conversion.")
-            return input_path
+        # For lossless, or if effective_bitrate matches (or no specific bitrate needed for format)
+        if format_details["default_bitrate"] is None: # Lossless
+             logger.info(f"File {input_path} is already in {format_name_upper} (lossless) format. Skipping conversion.")
+             return input_path
+        # For lossy, if no specific bitrate was relevant (already handled by effective_bitrate logic)
+        # This condition might be redundant if we always convert to ensure bitrate.
+        # Let's assume for now, if it's already the right extension, we don't re-encode unless bitrate implies so.
+        # However, the original logic converted if bitrate was specified even for same extension.
+        # To maintain similar behavior: if a bitrate is effectively set for a lossy format, we proceed.
+        # If effective_bitrate is None (e.g. for FLAC, WAV), and extension matches, skip.
+        if not effective_bitrate and format_details["default_bitrate"] is not None:
+             logger.info(f"File {input_path} is already in {format_name_upper} format with a suitable bitrate. Skipping conversion.")
+             return input_path
     
     # Get the output path
-    output_path = get_output_path(input_path, format_name)
+    output_path = get_output_path(input_path, format_name_upper)
     
     # Use a temporary file for the conversion to avoid conflicts
     temp_output = output_path + ".tmp"
@@ -201,24 +188,28 @@ def convert_audio(input_path, format_name=None, bitrate=None, register_func=None
     try:
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", input_path]
         
-        # Add bitrate parameter for lossy formats
-        if bitrate and format_details["bitrates"]:
-            cmd.extend(["-b:a", bitrate])
+        # Add bitrate parameter for lossy formats if an effective_bitrate is set
+        if effective_bitrate and format_details["bitrates"]: # format_details["bitrates"] implies lossy
+            cmd.extend(["-b:a", effective_bitrate])
         
         # Add codec parameter
         cmd.extend(["-c:a", format_details["ffmpeg_codec"]])
         
+        # Add format flag
+        if "ffmpeg_format_flag" in format_details:
+            cmd.extend(["-f", format_details["ffmpeg_format_flag"]])
+        
         # For some formats, add additional parameters
-        if format_name == "MP3":
+        if format_name_upper == "MP3":
             # Use high quality settings for MP3
-            if not bitrate or int(bitrate.replace('k', '')) >= 256:
+            if not effective_bitrate or int(effective_bitrate.replace('k', '')) >= 256:
                 cmd.extend(["-q:a", "0"])
         
         # Add output file
         cmd.append(temp_output)
         
         # Run the conversion
-        logger.info(f"Converting {input_path} to {format_name}" + (f" at {bitrate}" if bitrate else ""))
+        logger.info(f"Converting {input_path} to {format_name_upper}" + (f" at {effective_bitrate}" if effective_bitrate else ""))
         process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         
         if process.returncode != 0:
@@ -240,7 +231,7 @@ def convert_audio(input_path, format_name=None, bitrate=None, register_func=None
             os.remove(input_path)
             unregister_active_download(input_path)
         
-        logger.info(f"Successfully converted to {format_name}" + (f" at {bitrate}" if bitrate else ""))
+        logger.info(f"Successfully converted to {format_name_upper}" + (f" at {effective_bitrate}" if effective_bitrate else ""))
         return output_path
         
     except Exception as e:
