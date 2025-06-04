@@ -23,3 +23,4 @@ stock_not_interface = False
 stock_zip = False
 stock_real_time_dl = False
 stock_save_cover = False # Default for saving cover image
+stock_market = None

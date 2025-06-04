@@ -26,12 +26,13 @@ from deezspot.exceptions import (
     TrackNotFound,
     NoDataApi,
     AlbumNotFound,
+    MarketAvailabilityError,
 )
 from deezspot.libutils.utils import (
     create_zip,
     get_ids,
     link_is_valid,
-    what_kind,
+    what_kind
 )
 from deezspot.libutils.others_settings import (
     stock_output,
@@ -40,8 +41,10 @@ from deezspot.libutils.others_settings import (
     stock_not_interface,
     stock_zip,
     stock_save_cover,
+    stock_market
 )
 from deezspot.libutils.logging_utils import ProgressReporter, logger
+import requests
 
 API()
 
@@ -105,14 +108,24 @@ class DeeLogin:
         max_retries=5,
         convert_to=None,
         bitrate=None,
-        save_cover=stock_save_cover
+        save_cover=stock_save_cover,
+        market=stock_market
     ) -> Track:
 
         link_is_valid(link_track)
         ids = get_ids(link_track)
+        song_metadata = None
+        market_str = market
+        if isinstance(market, list):
+            market_str = ", ".join([m.upper() for m in market])
+        elif isinstance(market, str):
+            market_str = market.upper()
 
         try:
-            song_metadata = API.tracking(ids)
+            song_metadata = API.tracking(ids, market=market)
+        except MarketAvailabilityError as e:
+            logger.error(f"Track {ids} is not available in market(s) '{market_str}'. Error: {e.message}")
+            raise TrackNotFound(url=link_track, message=e.message) from e
         except NoDataApi:
             infos = self.__gw_api.get_song_data(ids)
 
@@ -120,7 +133,13 @@ class DeeLogin:
                 raise TrackNotFound(link_track)
 
             ids = infos['FALLBACK']['SNG_ID']
-            song_metadata = API.tracking(ids)
+            try:
+                song_metadata = API.tracking(ids, market=market)
+            except MarketAvailabilityError as e:
+                logger.error(f"Fallback track {ids} is not available in market(s) '{market_str}'. Error: {e.message}")
+                raise TrackNotFound(url=link_track, message=e.message) from e
+            except NoDataApi:
+                 raise TrackNotFound(link_track)
 
         preferences = Preferences()
         preferences.link = link_track
@@ -131,19 +150,16 @@ class DeeLogin:
         preferences.recursive_quality = recursive_quality
         preferences.recursive_download = recursive_download
         preferences.not_interface = not_interface
-        # New custom formatting preferences:
         preferences.custom_dir_format = custom_dir_format
         preferences.custom_track_format = custom_track_format
-        # Track number padding option
         preferences.pad_tracks = pad_tracks
-        # Retry parameters
         preferences.initial_retry_delay = initial_retry_delay
         preferences.retry_delay_increase = retry_delay_increase
         preferences.max_retries = max_retries
-        # Audio conversion parameter
         preferences.convert_to = convert_to
         preferences.bitrate = bitrate
         preferences.save_cover = save_cover
+        preferences.market = market
 
         track = DW_TRACK(preferences).dw()
 
@@ -165,18 +181,25 @@ class DeeLogin:
         max_retries=5,
         convert_to=None,
         bitrate=None,
-        save_cover=stock_save_cover
+        save_cover=stock_save_cover,
+        market=stock_market
     ) -> Album:
 
         link_is_valid(link_album)
         ids = get_ids(link_album)
+        album_json = None
+        market_str = market
+        if isinstance(market, list):
+            market_str = ", ".join([m.upper() for m in market])
+        elif isinstance(market, str):
+            market_str = market.upper()
 
         try:
             album_json = API.get_album(ids)
         except NoDataApi:
             raise AlbumNotFound(link_album)
 
-        song_metadata = API.tracking_album(album_json)
+        song_metadata = API.tracking_album(album_json, market=market)
 
         preferences = Preferences()
         preferences.link = link_album
@@ -189,19 +212,16 @@ class DeeLogin:
         preferences.recursive_download = recursive_download
         preferences.not_interface = not_interface
         preferences.make_zip = make_zip
-        # New custom formatting preferences:
         preferences.custom_dir_format = custom_dir_format
         preferences.custom_track_format = custom_track_format
-        # Track number padding option
         preferences.pad_tracks = pad_tracks
-        # Retry parameters
         preferences.initial_retry_delay = initial_retry_delay
         preferences.retry_delay_increase = retry_delay_increase
         preferences.max_retries = max_retries
-        # Audio conversion parameter
         preferences.convert_to = convert_to
         preferences.bitrate = bitrate
         preferences.save_cover = save_cover
+        preferences.market = market
 
         album = DW_ALBUM(preferences).dw()
 
@@ -223,7 +243,8 @@ class DeeLogin:
         max_retries=5,
         convert_to=None,
         bitrate=None,
-        save_cover=stock_save_cover
+        save_cover=stock_save_cover,
+        market=stock_market
     ) -> Playlist:
 
         link_is_valid(link_playlist)
@@ -231,20 +252,93 @@ class DeeLogin:
 
         song_metadata = []
         playlist_json = API.get_playlist(ids)
+        market_str_playlist = market
+        if isinstance(market, list):
+            market_str_playlist = ", ".join([m.upper() for m in market])
+        elif isinstance(market, str):
+            market_str_playlist = market.upper()
 
         for track in playlist_json['tracks']['data']:
             c_ids = track['id']
+            c_song_metadata_item = None
+            track_title_for_error = track.get('title', 'Unknown Track')
+            track_artist_for_error = track.get('artist', {}).get('name', 'Unknown Artist')
 
             try:
-                c_song_metadata = API.tracking(c_ids)
+                c_song_metadata_item = API.tracking(c_ids, market=market)
+            except MarketAvailabilityError as e:
+                logger.warning(f"Track '{track_title_for_error}' (ID: {c_ids}) in playlist not available in market(s) '{market_str_playlist}': {e.message}")
+                c_song_metadata_item = {
+                    'error_type': 'MarketAvailabilityError', 
+                    'message': e.message, 
+                    'name': track_title_for_error, 
+                    'artist': track_artist_for_error, 
+                    'ids': c_ids,
+                    'checked_markets': market_str_playlist
+                }
             except NoDataApi:
                 infos = self.__gw_api.get_song_data(c_ids)
                 if not "FALLBACK" in infos:
-                    c_song_metadata = f"{track['title']} - {track['artist']['name']}"
+                    logger.warning(f"Track '{track_title_for_error}' (ID: {c_ids}) in playlist not found on Deezer and no fallback.")
+                    c_song_metadata_item = {
+                        'error_type': 'NoDataApi', 
+                        'message': f"Track {track_title_for_error} - {track_artist_for_error} (ID: {c_ids}) not found.",
+                        'name': track_title_for_error, 
+                        'artist': track_artist_for_error, 
+                        'ids': c_ids
+                    }
                 else:
-                    c_song_metadata = API.tracking(c_ids)
-
-            song_metadata.append(c_song_metadata)
+                    fallback_ids = infos['FALLBACK']['SNG_ID']
+                    try:
+                        c_song_metadata_item = API.tracking(fallback_ids, market=market)
+                    except MarketAvailabilityError as e_fallback:
+                        logger.warning(f"Fallback track (Original ID: {c_ids}, Fallback ID: {fallback_ids}) for '{track_title_for_error}' in playlist not available in market(s) '{market_str_playlist}': {e_fallback.message}")
+                        c_song_metadata_item = {
+                            'error_type': 'MarketAvailabilityError', 
+                            'message': e_fallback.message, 
+                            'name': track_title_for_error, 
+                            'artist': track_artist_for_error, 
+                            'ids': fallback_ids,
+                            'checked_markets': market_str_playlist
+                        }
+                    except NoDataApi:
+                        logger.warning(f"Fallback track (Original ID: {c_ids}, Fallback ID: {fallback_ids}) for '{track_title_for_error}' in playlist also not found on Deezer.")
+                        c_song_metadata_item = {
+                            'error_type': 'NoDataApi', 
+                            'message': f"Fallback for track {track_title_for_error} (ID: {fallback_ids}) also not found.",
+                            'name': track_title_for_error, 
+                            'artist': track_artist_for_error, 
+                            'ids': fallback_ids
+                        }
+                    except requests.exceptions.ConnectionError as e_conn_fallback:
+                        logger.warning(f"Connection error fetching metadata for fallback track (Original ID: {c_ids}, Fallback ID: {fallback_ids}) for '{track_title_for_error}' in playlist: {str(e_conn_fallback)}")
+                        c_song_metadata_item = {
+                            'error_type': 'ConnectionError',
+                            'message': f"Connection error on fallback: {str(e_conn_fallback)}",
+                            'name': track_title_for_error,
+                            'artist': track_artist_for_error,
+                            'ids': fallback_ids
+                        }
+            except requests.exceptions.ConnectionError as e_conn:
+                logger.warning(f"Connection error fetching metadata for track '{track_title_for_error}' (ID: {c_ids}) in playlist: {str(e_conn)}")
+                c_song_metadata_item = {
+                    'error_type': 'ConnectionError',
+                    'message': f"Connection error: {str(e_conn)}",
+                    'name': track_title_for_error,
+                    'artist': track_artist_for_error,
+                    'ids': c_ids
+                }
+            except Exception as e_other_metadata:
+                logger.warning(f"Unexpected error fetching metadata for track '{track_title_for_error}' (ID: {c_ids}) in playlist: {str(e_other_metadata)}")
+                c_song_metadata_item = {
+                    'error_type': 'MetadataError',
+                    'message': str(e_other_metadata),
+                    'name': track_title_for_error,
+                    'artist': track_artist_for_error,
+                    'ids': c_ids
+                }
+            
+            song_metadata.append(c_song_metadata_item)
 
         preferences = Preferences()
         preferences.link = link_playlist
@@ -257,19 +351,16 @@ class DeeLogin:
         preferences.recursive_download = recursive_download
         preferences.not_interface = not_interface
         preferences.make_zip = make_zip
-        # New custom formatting preferences:
         preferences.custom_dir_format = custom_dir_format
         preferences.custom_track_format = custom_track_format
-        # Track number padding option
         preferences.pad_tracks = pad_tracks
-        # Retry parameters
         preferences.initial_retry_delay = initial_retry_delay
         preferences.retry_delay_increase = retry_delay_increase
         preferences.max_retries = max_retries
-        # Audio conversion parameter
         preferences.convert_to = convert_to
         preferences.bitrate = bitrate
         preferences.save_cover = save_cover
+        preferences.market = market
 
         playlist = DW_PLAYLIST(preferences).dw()
 
@@ -287,7 +378,8 @@ class DeeLogin:
         pad_tracks=True,
         convert_to=None,
         bitrate=None,
-        save_cover=stock_save_cover
+        save_cover=stock_save_cover,
+        market=stock_market
     ) -> list[Track]:
 
         link_is_valid(link_artist)
@@ -305,7 +397,8 @@ class DeeLogin:
                 pad_tracks=pad_tracks,
                 convert_to=convert_to,
                 bitrate=bitrate,
-                save_cover=save_cover
+                save_cover=save_cover,
+                market=market
             )
             for track in playlist_json
         ]
@@ -348,7 +441,8 @@ class DeeLogin:
         max_retries=5,
         convert_to=None,
         bitrate=None,
-        save_cover=stock_save_cover
+        save_cover=stock_save_cover,
+        market=stock_market
     ) -> Track:
 
         track_link_dee = self.convert_spoty_to_dee_link_track(link_track)
@@ -368,7 +462,8 @@ class DeeLogin:
             max_retries=max_retries,
             convert_to=convert_to,
             bitrate=bitrate,
-            save_cover=save_cover
+            save_cover=save_cover,
+            market=market
         )
 
         return track
@@ -468,7 +563,8 @@ class DeeLogin:
         max_retries=5,
         convert_to=None,
         bitrate=None,
-        save_cover=stock_save_cover
+        save_cover=stock_save_cover,
+        market=stock_market
     ) -> Album:
 
         link_dee = self.convert_spoty_to_dee_link_album(link_album)
@@ -486,7 +582,8 @@ class DeeLogin:
             max_retries=max_retries,
             convert_to=convert_to,
             bitrate=bitrate,
-            save_cover=save_cover
+            save_cover=save_cover,
+            market=market
         )
 
         return album
@@ -507,7 +604,8 @@ class DeeLogin:
         max_retries=5,
         convert_to=None,
         bitrate=None,
-        save_cover=stock_save_cover
+        save_cover=stock_save_cover,
+        market=stock_market
     ) -> Playlist:
 
         link_is_valid(link_playlist)
@@ -585,7 +683,8 @@ class DeeLogin:
                     max_retries=max_retries,
                     convert_to=convert_to,
                     bitrate=bitrate,
-                    save_cover=save_cover
+                    save_cover=save_cover,
+                    market=market
                 )
                 tracks.append(downloaded_track)
             except (TrackNotFound, NoDataApi) as e:
@@ -641,7 +740,8 @@ class DeeLogin:
         pad_tracks=True,
         convert_to=None,
         bitrate=None,
-        save_cover=stock_save_cover
+        save_cover=stock_save_cover,
+        market=stock_market
     ) -> Track:
 
         query = f"track:{song} artist:{artist}"
@@ -675,7 +775,8 @@ class DeeLogin:
             max_retries=max_retries,
             convert_to=convert_to,
             bitrate=bitrate,
-            save_cover=save_cover
+            save_cover=save_cover,
+            market=market
         )
 
         return track
@@ -696,18 +797,34 @@ class DeeLogin:
         max_retries=5,
         convert_to=None,
         bitrate=None,
-        save_cover=stock_save_cover
+        save_cover=stock_save_cover,
+        market=stock_market
     ) -> Episode:
         
         link_is_valid(link_episode)
         ids = get_ids(link_episode)
+        episode_metadata = None
+        market_str_episode = market
+        if isinstance(market, list):
+            market_str_episode = ", ".join([m.upper() for m in market])
+        elif isinstance(market, str):
+            market_str_episode = market.upper()
         
         try:
-            episode_metadata = API.tracking(ids)
+            episode_metadata = API.tracking(ids, market=market)
+        except MarketAvailabilityError as e:
+            logger.error(f"Episode {ids} is not available in market(s) '{market_str_episode}'. Error: {e.message}")
+            # For episodes, structure of error might be different than TrackNotFound expects if it uses track-specific fields
+            # Creating a message that TrackNotFound can use
+            raise TrackNotFound(url=link_episode, message=f"Episode not available in market(s) '{market_str_episode}': {e.message}") from e
         except NoDataApi:
             infos = self.__gw_api.get_episode_data(ids)
             if not infos:
-                raise TrackNotFound("Episode not found")
+                raise TrackNotFound(f"Episode {ids} not found")
+            # For episodes, API.tracking is usually not called again with GW API data in this flow.
+            # We construct metadata directly.
+            # No direct market check here as available_countries might not be in GW response for episodes.
+            # The initial API.tracking call is the main point for market check for episodes.
             episode_metadata = {
                 'music': infos.get('EPISODE_TITLE', ''),
                 'artist': infos.get('SHOW_NAME', ''),
@@ -738,6 +855,7 @@ class DeeLogin:
         preferences.bitrate = bitrate
         preferences.save_cover = save_cover
         preferences.is_episode = True
+        preferences.market = market
 
         episode = DW_EPISODE(preferences).dw()
 
@@ -759,7 +877,8 @@ class DeeLogin:
         max_retries=5,
         convert_to=None,
         bitrate=None,
-        save_cover=stock_save_cover
+        save_cover=stock_save_cover,
+        market=stock_market
     ) -> Smart:
 
         link_is_valid(link)
@@ -804,7 +923,8 @@ class DeeLogin:
                 max_retries=max_retries,
                 convert_to=convert_to,
                 bitrate=bitrate,
-                save_cover=save_cover
+                save_cover=save_cover,
+                market=market
             )
             smart.type = "track"
             smart.track = track
@@ -833,7 +953,8 @@ class DeeLogin:
                 max_retries=max_retries,
                 convert_to=convert_to,
                 bitrate=bitrate,
-                save_cover=save_cover
+                save_cover=save_cover,
+                market=market
             )
             smart.type = "album"
             smart.album = album
@@ -862,7 +983,8 @@ class DeeLogin:
                 max_retries=max_retries,
                 convert_to=convert_to,
                 bitrate=bitrate,
-                save_cover=save_cover
+                save_cover=save_cover,
+                market=market
             )
             smart.type = "playlist"
             smart.playlist = playlist

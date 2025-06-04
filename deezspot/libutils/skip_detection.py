@@ -5,6 +5,7 @@ from mutagen import File
 from mutagen.easyid3 import EasyID3
 from mutagen.oggvorbis import OggVorbis
 from mutagen.flac import FLAC
+from mutagen.mp3 import MP3 # Added for explicit MP3 type checking
 # from mutagen.mp4 import MP4 # MP4 is usually handled by File for .m4a
 
 # AUDIO_FORMATS and get_output_path will be imported from audio_converter
@@ -30,9 +31,24 @@ def read_metadata_from_file(file_path, logger):
         title = None
         album = None
 
-        if isinstance(audio, EasyID3): # MP3
+        if isinstance(audio, EasyID3): # This might occur if easy=True was used, but we use easy=False
+            # This branch is less likely to be hit with current File(..., easy=False) usage for MP3s
             title = audio.get('title', [None])[0]
             album = audio.get('album', [None])[0]
+        elif isinstance(audio, MP3): # Correctly handle MP3 objects when easy=False
+            # For mutagen.mp3.MP3, tags are typically accessed via audio.tags (an ID3 object)
+            # Common ID3 frames for title and album are TIT2 and TALB respectively.
+            # The .text attribute of a frame object usually holds a list of strings.
+            if audio.tags:
+                title_frame = audio.tags.get('TIT2')
+                if title_frame:
+                    title = title_frame.text[0] if title_frame.text else None
+                
+                album_frame = audio.tags.get('TALB')
+                if album_frame:
+                    album = album_frame.text[0] if album_frame.text else None
+            else:
+                logger.debug(f"No tags found in MP3 file: {file_path}")
         elif isinstance(audio, OggVorbis): # OGG
             title = audio.get('TITLE', [None])[0] # Vorbis tags are case-insensitive but typically uppercase
             album = audio.get('ALBUM', [None])[0]

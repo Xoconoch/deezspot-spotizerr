@@ -24,3 +24,5 @@ qualities = {
 		"s_quality": "NORMAL"
 	}
 }
+
+stock_market = None

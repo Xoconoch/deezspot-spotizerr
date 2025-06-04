@@ -5,6 +5,23 @@ from datetime import datetime
 from deezspot.libutils.utils import convert_to_date
 import traceback
 from deezspot.libutils.logging_utils import logger
+from deezspot.exceptions import MarketAvailabilityError
+
+def _check_market_availability(item_name: str, item_type: str, api_available_markets: list[str] | None, user_markets: list[str] | None):
+    """Checks if an item is available in any of the user-specified markets."""
+    if user_markets and api_available_markets is not None:
+        is_available_in_any_user_market = any(m in api_available_markets for m in user_markets)
+        if not is_available_in_any_user_market:
+            markets_str = ", ".join(user_markets)
+            raise MarketAvailabilityError(f"{item_type} '{item_name}' not available in provided market(s): {markets_str}")
+    elif user_markets and api_available_markets is None:
+        # Log a warning if user specified markets, but API response doesn't include 'available_markets'
+        # This might indicate the item is available in all markets or API doesn't provide this info for this item type.
+        # For now, we proceed without raising an error, as we cannot confirm it's "not available".
+        logger.warning(
+            f"Market availability check for {item_type} '{item_name}' skipped: "
+            "API response did not include 'available_markets' field. Assuming availability."
+        )
 
 def _get_best_image_urls(images_list):
     urls = {'image': '', 'image2': '', 'image3': ''}
@@ -28,13 +45,18 @@ def _get_best_image_urls(images_list):
     
     return urls
 
-def tracking(ids, album_data_for_track=None):
+def tracking(ids, album_data_for_track=None, market: list[str] | None = None):
     datas = {}
     try:
         json_track = Spo.get_track(ids)
         if not json_track:
             logger.error(f"Failed to get track details for ID: {ids} from Spotify API.")
             return None
+
+        # Perform market availability check for the track
+        track_name_for_check = json_track.get('name', f'Track ID {ids}')
+        api_track_markets = json_track.get('available_markets')
+        _check_market_availability(track_name_for_check, "Track", api_track_markets, market)
 
         # Album details section
         # Use provided album_data_for_track if available (from tracking_album context)
@@ -129,6 +151,8 @@ def tracking(ids, album_data_for_track=None):
         datas['ids'] = ids
         logger.debug(f"Successfully tracked metadata for track {ids}")
         
+    except MarketAvailabilityError: # Re-raise to be caught by the calling download method
+        raise
     except Exception as e:
         logger.error(f"Failed to track metadata for track {ids}: {str(e)}")
         logger.debug(traceback.format_exc())
@@ -136,13 +160,18 @@ def tracking(ids, album_data_for_track=None):
 
     return datas
 
-def tracking_album(album_json):
+def tracking_album(album_json, market: list[str] | None = None):
     if not album_json:
         logger.error("tracking_album received None or empty album_json.")
         return None
         
     song_metadata = {}
     try:
+        # Perform market availability check for the album itself
+        album_name_for_check = album_json.get('name', f"Album ID {album_json.get('id', 'Unknown')}")
+        api_album_markets = album_json.get('available_markets')
+        _check_market_availability(album_name_for_check, "Album", api_album_markets, market)
+
         initial_list_fields = {
             "music": [], "artist": [], "tracknum": [], "discnum": [],
             "duration": [], "isrc": [], "ids": [], "explicit_list": [], "popularity_list": []
@@ -201,7 +230,8 @@ def tracking_album(album_json):
                 continue
 
             # Pass the main album_json as album_data_for_track to avoid refetching it in tracking()
-            track_details = tracking(c_ids, album_data_for_track=album_json) 
+            # Also pass the market parameter
+            track_details = tracking(c_ids, album_data_for_track=album_json, market=market) 
 
             if track_details:
                 song_metadata['music'].append(track_details.get('music', 'Unknown Track'))
@@ -234,6 +264,8 @@ def tracking_album(album_json):
 
         logger.debug(f"Successfully tracked metadata for album {album_json.get('id', 'N/A')}")
                     
+    except MarketAvailabilityError: # Re-raise
+        raise
     except Exception as e:
         logger.error(f"Failed to track album metadata for album ID {album_json.get('id', 'N/A') if album_json else 'N/A'}: {str(e)}")
         logger.debug(traceback.format_exc())
@@ -241,13 +273,18 @@ def tracking_album(album_json):
 
     return song_metadata
 
-def tracking_episode(ids):
+def tracking_episode(ids, market: list[str] | None = None):
     datas = {}
     try:
         json_episode = Spo.get_episode(ids)
         if not json_episode:
             logger.error(f"Failed to get episode details for ID: {ids} from Spotify API.")
             return None
+
+        # Perform market availability check for the episode
+        episode_name_for_check = json_episode.get('name', f'Episode ID {ids}')
+        api_episode_markets = json_episode.get('available_markets')
+        _check_market_availability(episode_name_for_check, "Episode", api_episode_markets, market)
 
         image_urls = _get_best_image_urls(json_episode.get('images', []))
         datas.update(image_urls)
@@ -305,6 +342,8 @@ def tracking_episode(ids):
         
         logger.debug(f"Successfully tracked metadata for episode {ids}")
         
+    except MarketAvailabilityError: # Re-raise
+        raise
     except Exception as e:
         logger.error(f"Failed to track episode metadata for ID {ids}: {str(e)}")
         logger.debug(traceback.format_exc())
