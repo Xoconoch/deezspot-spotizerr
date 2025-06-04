@@ -104,6 +104,7 @@ class DeeLogin:
         retry_delay_increase=30,
         max_retries=5,
         convert_to=None,
+        bitrate=None,
         save_cover=stock_save_cover
     ) -> Track:
 
@@ -141,6 +142,7 @@ class DeeLogin:
         preferences.max_retries = max_retries
         # Audio conversion parameter
         preferences.convert_to = convert_to
+        preferences.bitrate = bitrate
         preferences.save_cover = save_cover
 
         track = DW_TRACK(preferences).dw()
@@ -162,6 +164,7 @@ class DeeLogin:
         retry_delay_increase=30,
         max_retries=5,
         convert_to=None,
+        bitrate=None,
         save_cover=stock_save_cover
     ) -> Album:
 
@@ -197,6 +200,7 @@ class DeeLogin:
         preferences.max_retries = max_retries
         # Audio conversion parameter
         preferences.convert_to = convert_to
+        preferences.bitrate = bitrate
         preferences.save_cover = save_cover
 
         album = DW_ALBUM(preferences).dw()
@@ -218,6 +222,7 @@ class DeeLogin:
         retry_delay_increase=30,
         max_retries=5,
         convert_to=None,
+        bitrate=None,
         save_cover=stock_save_cover
     ) -> Playlist:
 
@@ -263,6 +268,7 @@ class DeeLogin:
         preferences.max_retries = max_retries
         # Audio conversion parameter
         preferences.convert_to = convert_to
+        preferences.bitrate = bitrate
         preferences.save_cover = save_cover
 
         playlist = DW_PLAYLIST(preferences).dw()
@@ -280,6 +286,7 @@ class DeeLogin:
         custom_track_format=None,
         pad_tracks=True,
         convert_to=None,
+        bitrate=None,
         save_cover=stock_save_cover
     ) -> list[Track]:
 
@@ -297,6 +304,7 @@ class DeeLogin:
                 custom_track_format=custom_track_format,
                 pad_tracks=pad_tracks,
                 convert_to=convert_to,
+                bitrate=bitrate,
                 save_cover=save_cover
             )
             for track in playlist_json
@@ -339,6 +347,7 @@ class DeeLogin:
         retry_delay_increase=30,
         max_retries=5,
         convert_to=None,
+        bitrate=None,
         save_cover=stock_save_cover
     ) -> Track:
 
@@ -358,6 +367,7 @@ class DeeLogin:
             retry_delay_increase=retry_delay_increase,
             max_retries=max_retries,
             convert_to=convert_to,
+            bitrate=bitrate,
             save_cover=save_cover
         )
 
@@ -457,6 +467,7 @@ class DeeLogin:
         retry_delay_increase=30,
         max_retries=5,
         convert_to=None,
+        bitrate=None,
         save_cover=stock_save_cover
     ) -> Album:
 
@@ -474,6 +485,7 @@ class DeeLogin:
             retry_delay_increase=retry_delay_increase,
             max_retries=max_retries,
             convert_to=convert_to,
+            bitrate=bitrate,
             save_cover=save_cover
         )
 
@@ -494,6 +506,7 @@ class DeeLogin:
         retry_delay_increase=30,
         max_retries=5,
         convert_to=None,
+        bitrate=None,
         save_cover=stock_save_cover
     ) -> Playlist:
 
@@ -571,6 +584,7 @@ class DeeLogin:
                     retry_delay_increase=retry_delay_increase,
                     max_retries=max_retries,
                     convert_to=convert_to,
+                    bitrate=bitrate,
                     save_cover=save_cover
                 )
                 tracks.append(downloaded_track)
@@ -626,6 +640,7 @@ class DeeLogin:
         max_retries=5,
         pad_tracks=True,
         convert_to=None,
+        bitrate=None,
         save_cover=stock_save_cover
     ) -> Track:
 
@@ -659,6 +674,7 @@ class DeeLogin:
             retry_delay_increase=retry_delay_increase,
             max_retries=max_retries,
             convert_to=convert_to,
+            bitrate=bitrate,
             save_cover=save_cover
         )
 
@@ -678,6 +694,8 @@ class DeeLogin:
         initial_retry_delay=30,
         retry_delay_increase=30,
         max_retries=5,
+        convert_to=None,
+        bitrate=None,
         save_cover=stock_save_cover
     ) -> Episode:
         
@@ -714,7 +732,12 @@ class DeeLogin:
         preferences.recursive_download = recursive_download
         preferences.not_interface = not_interface
         # No convert_to for episode download (and preferences.convert_to is not set here)
+        preferences.max_retries = max_retries
+        # Audio conversion parameters
+        preferences.convert_to = convert_to
+        preferences.bitrate = bitrate
         preferences.save_cover = save_cover
+        preferences.is_episode = True
 
         episode = DW_EPISODE(preferences).dw()
 
@@ -735,6 +758,7 @@ class DeeLogin:
         retry_delay_increase=30,
         max_retries=5,
         convert_to=None,
+        bitrate=None,
         save_cover=stock_save_cover
     ) -> Smart:
 
@@ -779,6 +803,7 @@ class DeeLogin:
                 retry_delay_increase=retry_delay_increase,
                 max_retries=max_retries,
                 convert_to=convert_to,
+                bitrate=bitrate,
                 save_cover=save_cover
             )
             smart.type = "track"
@@ -807,6 +832,7 @@ class DeeLogin:
                 retry_delay_increase=retry_delay_increase,
                 max_retries=max_retries,
                 convert_to=convert_to,
+                bitrate=bitrate,
                 save_cover=save_cover
             )
             smart.type = "album"
@@ -835,6 +861,7 @@ class DeeLogin:
                 retry_delay_increase=retry_delay_increase,
                 max_retries=max_retries,
                 convert_to=convert_to,
+                bitrate=bitrate,
                 save_cover=save_cover
             )
             smart.type = "playlist"

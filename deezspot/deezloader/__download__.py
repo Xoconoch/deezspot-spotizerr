@@ -5,7 +5,7 @@ import requests
 import time
 from os.path import isfile
 from copy import deepcopy
-from deezspot.libutils.audio_converter import convert_audio, parse_format_string
+from deezspot.libutils.audio_converter import convert_audio
 from deezspot.deezloader.dee_api import API
 from deezspot.deezloader.deegw_api import API_GW
 from deezspot.deezloader.deezer_settings import qualities
@@ -43,6 +43,9 @@ from mutagen.id3 import ID3
 from mutagen.mp4 import MP4
 from mutagen import File
 from deezspot.libutils.logging_utils import logger, ProgressReporter
+from deezspot.libutils.skip_detection import check_track_exists
+from deezspot.libutils.cleanup_utils import register_active_download, unregister_active_download
+from deezspot.libutils.audio_converter import AUDIO_FORMATS # Added for parse_format_string
 
 class Download_JOB:
     progress_reporter = None
@@ -200,6 +203,7 @@ class EASY_DW:
         self.__recursive_quality = preferences.recursive_quality
         self.__recursive_download = preferences.recursive_download
         self.__convert_to = getattr(preferences, 'convert_to', None)
+        self.__bitrate = getattr(preferences, 'bitrate', None) # Added for consistency
 
 
         if self.__infos_dw.get('__TYPE__') == 'episode':
@@ -225,45 +229,6 @@ class EASY_DW:
 
         self.__set_quality()
         self.__write_track()
-
-    def __track_already_exists(self, title, album):
-        # Ensure the song path is set; if not, compute it.
-        if not hasattr(self, '_EASY_DW__song_path') or not self.__song_path:
-            self.__set_song_path()
-        
-        # Get only the final directory where the track will be saved.
-        final_dir = os.path.dirname(self.__song_path)
-        if not os.path.exists(final_dir):
-            return False
-
-        # List files only in the final directory.
-        for file in os.listdir(final_dir):
-            file_path = os.path.join(final_dir, file)
-            lower_file = file.lower()
-            try:
-                existing_title = None
-                existing_album = None
-                if lower_file.endswith('.flac'):
-                    audio = FLAC(file_path)
-                    existing_title = audio.get('title', [None])[0]
-                    existing_album = audio.get('album', [None])[0]
-                elif lower_file.endswith('.mp3'):
-                    audio = MP3(file_path, ID3=ID3)
-                    existing_title = audio.get('TIT2', [None])[0]
-                    existing_album = audio.get('TALB', [None])[0]
-                elif lower_file.endswith('.m4a'):
-                    audio = MP4(file_path)
-                    existing_title = audio.get('\xa9nam', [None])[0]
-                    existing_album = audio.get('\xa9alb', [None])[0]
-                elif lower_file.endswith(('.ogg', '.wav')):
-                    audio = File(file_path)
-                    existing_title = audio.get('title', [None])[0]
-                    existing_album = audio.get('album', [None])[0]
-                if existing_title == title and existing_album == album:
-                    return True
-            except Exception:
-                continue
-        return False
 
     def __set_quality(self) -> None:
         self.__file_format = self.__c_quality['f_format']
@@ -334,16 +299,40 @@ class EASY_DW:
         # Check if track already exists based on metadata
         current_title = self.__song_metadata['music']
         current_album = self.__song_metadata['album']
-        if self.__track_already_exists(current_title, current_album):
-            # Create skipped progress report using the new required format
+        current_artist = self.__song_metadata.get('artist') # For logging
+
+        # Use check_track_exists from skip_detection module
+        # self.__song_path is the original path before any conversion logic in this download attempt.
+        # self.__convert_to is the user's desired final format.
+        exists, existing_file_path = check_track_exists(
+            original_song_path=self.__song_path,
+            title=current_title,
+            album=current_album,
+            convert_to=self.__convert_to, # User's target conversion format
+            logger=logger
+        )
+
+        if exists and existing_file_path:
+            logger.info(f"Track '{current_title}' by '{current_artist}' already exists at '{existing_file_path}'. Skipping download.")
+            
+            self.__c_track.song_path = existing_file_path
+            _, new_ext = os.path.splitext(existing_file_path)
+            self.__c_track.file_format = new_ext.lower()
+            # self.__c_track.song_quality might need re-evaluation if we could determine
+            # quality of existing file. For now, assume it's acceptable.
+            
+            self.__c_track.success = True
+            self.__c_track.was_skipped = True
+
             progress_data = {
                 "type": "track",
                 "song": current_title,
                 "artist": self.__song_metadata['artist'],
                 "status": "skipped",
                 "url": self.__link,
-                "reason": "Track already exists",
-                "convert_to": self.__convert_to
+                "reason": f"Track already exists in desired format at {existing_file_path}",
+                "convert_to": self.__convert_to,
+                "bitrate": self.__bitrate
             }
             
             # Add parent info based on parent type
@@ -389,15 +378,15 @@ class EASY_DW:
             # Create a minimal track object for skipped scenario
             skipped_item = Track(
                 self.__song_metadata,
-                self.__song_path, # song_path would be set if __write_track was called
-                self.__file_format, self.__song_quality,
+                existing_file_path, # Use the path of the existing file
+                self.__c_track.file_format, # Use updated file format
+                self.__song_quality, # Original download quality target
                 self.__link, self.__ids
             )
-            skipped_item.success = False
+            skipped_item.success = True # Considered successful as file is available
             skipped_item.was_skipped = True
-            # It's important that this skipped_item is what's checked later, or self.__c_track is updated
-            self.__c_track = skipped_item # Ensure self.__c_track reflects this skipped state
-            return self.__c_track # Return the correctly flagged skipped track
+            self.__c_track = skipped_item
+            return self.__c_track
 
         # Initialize success to False for the item being processed
         if self.__infos_dw.get('__TYPE__') == 'episode':
@@ -626,10 +615,23 @@ class EASY_DW:
                 Download_JOB.report_progress(progress_data)
                 
                 # Start of processing block (decryption, tagging, cover, conversion)
-                # Decrypt the file using the utility function
-                decryptfile(c_crypted_audio, self.__fallback_ids, self.__song_path)
-                logger.debug(f"Successfully decrypted track using {encryption_type} encryption")
-            
+                register_active_download(self.__song_path)
+                try:
+                    # Decrypt the file using the utility function
+                    decryptfile(c_crypted_audio, self.__fallback_ids, self.__song_path)
+                    logger.debug(f"Successfully decrypted track using {encryption_type} encryption")
+                    # self.__song_path is still registered
+                except Exception as e_decrypt:
+                    unregister_active_download(self.__song_path)
+                    if isfile(self.__song_path):
+                        try:
+                            os.remove(self.__song_path)
+                        except OSError: # Handle potential errors during removal
+                            logger.warning(f"Could not remove partially downloaded file: {self.__song_path}")
+                    self.__c_track.success = False
+                    self.__c_track.error_message = f"Decryption failed: {str(e_decrypt)}"
+                    raise TrackNotFound(f"Failed to process {self.__song_path}. Error: {str(e_decrypt)}") from e_decrypt
+
                 self.__add_more_tags() # self.__song_metadata is updated here
                 self.__c_track.tags = self.__song_metadata # IMPORTANT: Update track object's tags
 
@@ -644,31 +646,55 @@ class EASY_DW:
 
                 # Apply audio conversion if requested
                 if self.__convert_to:
-                    format_name, bitrate = parse_format_string(self.__convert_to)
+                    format_name, bitrate = self._parse_format_string(self.__convert_to)
                     if format_name:
-                        from deezspot.deezloader.__download__ import register_active_download, unregister_active_download # Ensure these are available or handle differently
+                        # Current self.__song_path (original decrypted file) is registered.
+                        # convert_audio will handle unregistering it if it creates a new file,
+                        # and will register the new file.
+                        path_before_conversion = self.__song_path
                         try:
                             converted_path = convert_audio(
-                                self.__song_path, 
+                                path_before_conversion, 
                                 format_name, 
-                                bitrate,
+                                bitrate if bitrate else self.__bitrate, # Prefer specific bitrate from string, fallback to general
                                 register_active_download,
                                 unregister_active_download
                             )
-                            if converted_path != self.__song_path:
+                            if converted_path != path_before_conversion:
+                                # convert_audio has unregistered path_before_conversion (if it existed and was different)
+                                # and registered converted_path.
                                 self.__song_path = converted_path
                                 self.__c_track.song_path = converted_path
+                                _, new_ext = os.path.splitext(converted_path)
+                                self.__file_format = new_ext.lower() # Update internal state
+                                self.__c_track.file_format = new_ext.lower()
+                                # self.__song_path (the converted_path) is now the registered active download
+                            # If converted_path == path_before_conversion, no actual file change, registration status managed by convert_audio
                         except Exception as conv_error:
-                            logger.error(f"Audio conversion error: {str(conv_error)}")
-                            # Decide if this is a fatal error for the track or if we proceed with original
-            
+                            logger.error(f"Audio conversion error: {str(conv_error)}. Proceeding with original format.")
+                            # path_before_conversion should still be registered if convert_audio failed early
+                            # or did not successfully unregister it.
+                            # If conversion fails, the original file (path_before_conversion) remains the target.
+                            # Its registration state should be preserved if convert_audio didn't affect it.
+                            # For safety, ensure it is considered the active download if conversion fails:
+                            register_active_download(path_before_conversion)
+
+
                 # Write tags to the final file (original or converted)
                 write_tags(self.__c_track)
                 self.__c_track.success = True # Mark as successful only after all steps including tags
+                unregister_active_download(self.__song_path) # Unregister the final successful file
 
             except Exception as e: # Handles errors from __write_track, decrypt, add_tags, save_cover, convert, write_tags
+                # Ensure unregister is called for self.__song_path if it was registered and an error occurred
+                # The specific error might have already unregistered it (e.g. decrypt error)
+                # Call it defensively.
+                unregister_active_download(self.__song_path)
                 if isfile(self.__song_path):
-                    os.remove(self.__song_path)
+                    try:
+                        os.remove(self.__song_path)
+                    except OSError:
+                         logger.warning(f"Could not remove file on error: {self.__song_path}")
                 
                 error_msg = str(e)
                 if "Data must be padded" in error_msg: error_msg = "Decryption error (padding issue) - Try a different quality setting or download format"
@@ -707,6 +733,8 @@ class EASY_DW:
             error_message = f"Download failed for '{song_title}' by '{artist_name}' (Link: {self.__link}). Error: {str(e)}"
             logger.error(error_message)
             # Store error on track object if possible
+            # Ensure self.__song_path is unregistered if an error occurs before successful completion.
+            unregister_active_download(self.__song_path)
             if hasattr(self, '_EASY_DW__c_track') and self.__c_track:
                 self.__c_track.success = False
                 self.__c_track.error_message = str(e)
@@ -719,42 +747,62 @@ class EASY_DW:
                 raise TrackNotFound("No direct stream URL found")
 
             os.makedirs(os.path.dirname(self.__song_path), exist_ok=True)
-
-            response = requests.get(direct_url, stream=True)
-            response.raise_for_status()
-
-            content_length = response.headers.get('content-length')
-            total_size = int(content_length) if content_length else None
-
-            downloaded = 0
-            with open(self.__song_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        size = f.write(chunk)
-                        downloaded += size
-                        
-                        # Download progress reporting could be added here
-
-            # Build episode progress report
-            progress_data = {
-                "type": "episode",
-                "song": self.__song_metadata.get('music', 'Unknown Episode'),
-                "artist": self.__song_metadata.get('artist', 'Unknown Show'),
-                "status": "done"
-            }
             
-            # Use Spotify URL if available (for downloadspo functions), otherwise use Deezer link
-            spotify_url = getattr(self.__preferences, 'spotify_url', None)
-            progress_data["url"] = spotify_url if spotify_url else self.__link
+            register_active_download(self.__song_path)
+            try:
+                response = requests.get(direct_url, stream=True)
+                response.raise_for_status()
+
+                content_length = response.headers.get('content-length')
+                total_size = int(content_length) if content_length else None
+
+                downloaded = 0
+                with open(self.__song_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            size = f.write(chunk)
+                            downloaded += size
+                            
+                            # Download progress reporting could be added here
+                
+                # If download successful, unregister the initially downloaded file before potential conversion
+                unregister_active_download(self.__song_path)
+
+
+                # Build episode progress report
+                progress_data = {
+                    "type": "episode",
+                    "song": self.__song_metadata.get('music', 'Unknown Episode'),
+                    "artist": self.__song_metadata.get('artist', 'Unknown Show'),
+                    "status": "done"
+                }
+                
+                # Use Spotify URL if available (for downloadspo functions), otherwise use Deezer link
+                spotify_url = getattr(self.__preferences, 'spotify_url', None)
+                progress_data["url"] = spotify_url if spotify_url else self.__link
+                
+                Download_JOB.report_progress(progress_data)
+                
+                self.__c_track.success = True
+                self.__write_episode()
+                write_tags(self.__c_track)
             
-            Download_JOB.report_progress(progress_data)
-            
-            self.__c_track.success = True
-            self.__write_episode()
-            write_tags(self.__c_track)
+                return self.__c_track
+
+            except Exception as e_dw_ep: # Catches errors from requests.get, file writing
+                unregister_active_download(self.__song_path) # Unregister if download part failed
+                if isfile(self.__song_path):
+                    try:
+                        os.remove(self.__song_path)
+                    except OSError:
+                        logger.warning(f"Could not remove episode file on error: {self.__song_path}")
+                self.__c_track.success = False # Mark as failed
+                episode_title = self.__preferences.song_metadata.get('music', 'Unknown Episode')
+                err_msg = f"Episode download failed for '{episode_title}' (URL: {self.__link}). Error: {str(e_dw_ep)}"
+                logger.error(err_msg)
+                self.__c_track.error_message = str(e_dw_ep)
+                raise TrackNotFound(message=err_msg, url=self.__link) from e_dw_ep
         
-            return self.__c_track
-
         except Exception as e:
             if isfile(self.__song_path):
                 os.remove(self.__song_path)
@@ -765,6 +813,35 @@ class EASY_DW:
             # Store error on track object
             self.__c_track.error_message = str(e)
             raise TrackNotFound(message=err_msg, url=self.__link) from e
+
+    def _parse_format_string(self, format_str: str) -> tuple[str | None, str | None]:
+        """Helper to parse format string like 'MP3_320K' into format and bitrate."""
+        if not format_str:
+            return None, None
+        
+        parts = format_str.upper().split('_', 1)
+        format_name = parts[0]
+        bitrate = parts[1] if len(parts) > 1 else None
+
+        if format_name not in AUDIO_FORMATS:
+            logger.warning(f"Unsupported format {format_name} in format string '{format_str}'. Will not convert.")
+            return None, None
+
+        if bitrate:
+            # Ensure bitrate ends with 'K' for consistency if it's a number followed by K
+            if bitrate[:-1].isdigit() and not bitrate.endswith('K'):
+                bitrate += 'K'
+            
+            valid_bitrates = AUDIO_FORMATS[format_name].get("bitrates", [])
+            if valid_bitrates and bitrate not in valid_bitrates:
+                default_br = AUDIO_FORMATS[format_name].get("default_bitrate")
+                logger.warning(f"Unsupported bitrate {bitrate} for {format_name}. Using default {default_br if default_br else 'as available'}.")
+                bitrate = default_br # Fallback to default, or None if no specific default for lossless
+            elif not valid_bitrates and AUDIO_FORMATS[format_name].get("default_bitrate") is None: # Lossless format
+                logger.info(f"Bitrate {bitrate} specified for lossless format {format_name}. Bitrate will be ignored by converter.")
+                # Keep bitrate as is, convert_audio will handle ignoring it for lossless.
+        
+        return format_name, bitrate
 
     def __add_more_tags(self) -> None:
         contributors = self.__infos_dw.get('SNG_CONTRIBUTORS', {})
