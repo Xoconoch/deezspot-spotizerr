@@ -983,6 +983,7 @@ class DW_ALBUM:
         # Report album initializing status
         album_name_for_report = self.__song_metadata.get('album', 'Unknown Album')
         total_tracks_for_report = self.__song_metadata.get('nb_tracks', 0)
+        album_link_for_report = self.__preferences.link # Get album link from preferences
         
         Download_JOB.report_progress({
             "type": "album",
@@ -990,7 +991,7 @@ class DW_ALBUM:
             "status": "initializing",
             "total_tracks": total_tracks_for_report,
             "title": album_name_for_report,
-            "url": f"https://deezer.com/album/{self.__ids}"
+            "url": album_link_for_report # Use the actual album link
         })
         
         infos_dw = API_GW.get_album_data(self.__ids)['data']
@@ -1024,67 +1025,99 @@ class DW_ALBUM:
         total_tracks = len(infos_dw)
         for a in range(total_tracks):
             track_number = a + 1
-            c_infos_dw = infos_dw[a]
+            # c_infos_dw is from API_GW.get_album_data, used for SNG_ID, SNG_TITLE etc.
+            c_infos_dw_item = infos_dw[a] 
             
-            # Retrieve the contributors info from the API response.
-            # It might be an empty list.
-            contributors = c_infos_dw.get('SNG_CONTRIBUTORS', {})
+            # self.__song_metadata is the dict-of-lists from API.tracking_album
+            # We need to construct c_song_metadata_for_easydw for the current track 'a'
+            # by picking the ath element from each list in self.__song_metadata.
             
-            # Check if contributors is an empty list.
-            if isinstance(contributors, list) and not contributors:
-                # Flag indicating we do NOT have contributors data to process.
-                has_contributors = False
-            else:
-                has_contributors = True
+            current_track_constructed_metadata = {}
+            potential_error_marker = None
+            is_current_track_error = False
 
-            # If we have contributor data, build the artist and composer strings.
-            if has_contributors:
-                main_artist = "; ".join(contributors.get('main_artist', []))
-                featuring = "; ".join(contributors.get('featuring', []))
+            # Check the 'music' field first for an error dict from API.tracking_album
+            if 'music' in self.__song_metadata and isinstance(self.__song_metadata['music'], list) and len(self.__song_metadata['music']) > a:
+                music_field_value = self.__song_metadata['music'][a]
+                if isinstance(music_field_value, dict) and 'error_type' in music_field_value:
+                    is_current_track_error = True
+                    potential_error_marker = music_field_value
+                    # The error marker dict itself will serve as the metadata for the failed track object
+                    current_track_constructed_metadata = potential_error_marker
+            
+            if not is_current_track_error:
+                # Populate current_track_constructed_metadata from self.__song_metadata lists
+                for key, value_list_template in self.__song_metadata_items: # self.__song_metadata_items is items() of dict-of-lists
+                    if isinstance(value_list_template, list): # e.g. self.__song_metadata['artist']
+                        if len(self.__song_metadata[key]) > a:
+                            current_track_constructed_metadata[key] = self.__song_metadata[key][a]
+                        else:
+                            current_track_constructed_metadata[key] = "Unknown" # Fallback if list is too short
+                    else: # Album-wide metadata (e.g. 'album', 'label')
+                        current_track_constructed_metadata[key] = self.__song_metadata[key]
                 
-                artist_parts = [main_artist]
-                if featuring:
-                    artist_parts.append(f"(feat. {featuring})")
-                artist_str = " ".join(artist_parts)
-                composer_str = "; ".join(contributors.get('composer', []))
-            
-            # Build the core track metadata.
-            # When there is no contributor info, we intentionally leave out the 'artist'
-            # and 'composer' keys so that the album-level metadata merge will supply them.
-            c_song_metadata = {
-                'music': c_infos_dw.get('SNG_TITLE', 'Unknown'),
-                'album': self.__song_metadata['album'],
-                'date': c_infos_dw.get('DIGITAL_RELEASE_DATE', ''),
-                'genre': self.__song_metadata.get('genre', 'Latin Music'),
-                'tracknum': f"{track_number}",
-                'discnum': f"{c_infos_dw.get('DISK_NUMBER', 1)}",
-                'isrc': c_infos_dw.get('ISRC', ''),
-                'album_artist': derived_album_artist_from_contributors,
-                'publisher': 'CanZion R',
-                'duration': int(c_infos_dw.get('DURATION', 0)),
-                'explicit': '1' if c_infos_dw.get('EXPLICIT_LYRICS', '0') == '1' else '0'
-            }
-            
-            # Only add contributor-based metadata if available.
-            if has_contributors:
-                c_song_metadata['artist'] = artist_str
-                c_song_metadata['composer'] = composer_str
+                # Ensure essential fields from c_infos_dw_item are preferred or added if missing from API.tracking_album results
+                current_track_constructed_metadata['music'] = current_track_constructed_metadata.get('music') or c_infos_dw_item.get('SNG_TITLE', 'Unknown')
+                # artist might be complex due to contributors, rely on what API.tracking_album prepared
+                # current_track_constructed_metadata['artist'] = current_track_constructed_metadata.get('artist') # Already populated or None
+                current_track_constructed_metadata['tracknum'] = current_track_constructed_metadata.get('tracknum') or f"{track_number}"
+                current_track_constructed_metadata['discnum'] = current_track_constructed_metadata.get('discnum') or f"{c_infos_dw_item.get('DISK_NUMBER', 1)}"
+                current_track_constructed_metadata['isrc'] = current_track_constructed_metadata.get('isrc') or c_infos_dw_item.get('ISRC', '')
+                current_track_constructed_metadata['duration'] = current_track_constructed_metadata.get('duration') or int(c_infos_dw_item.get('DURATION', 0))
+                current_track_constructed_metadata['explicit'] = current_track_constructed_metadata.get('explicit') or ('1' if c_infos_dw_item.get('EXPLICIT_LYRICS', '0') == '1' else '0')
+                current_track_constructed_metadata['album_artist'] = current_track_constructed_metadata.get('album_artist') or derived_album_artist_from_contributors
 
-            # No progress reporting here - done at the track level
-            
+            if is_current_track_error:
+                error_type = potential_error_marker.get('error_type', 'UnknownError')
+                error_message = potential_error_marker.get('message', 'An unknown error occurred.')
+                track_name_for_log = potential_error_marker.get('name', c_infos_dw_item.get('SNG_TITLE', f'Track {track_number}'))
+                track_id_for_log = potential_error_marker.get('ids', c_infos_dw_item.get('SNG_ID'))
+                
+                # Construct market_info string based on actual checked_markets from error dict or preferences fallback
+                checked_markets_str = ""
+                if error_type == 'MarketAvailabilityError':
+                    # Prefer checked_markets from the error dict if available
+                    if 'checked_markets' in c_infos_dw_item and c_infos_dw_item['checked_markets']:
+                        checked_markets_str = c_infos_dw_item['checked_markets']
+                    # Fallback to preferences.market if not in error dict (though it should be)
+                    elif self.__preferences.market:
+                        if isinstance(self.__preferences.market, list):
+                            checked_markets_str = ", ".join([m.upper() for m in self.__preferences.market])
+                        elif isinstance(self.__preferences.market, str):
+                            checked_markets_str = self.__preferences.market.upper()
+                market_log_info = f" (Market(s): {checked_markets_str})" if checked_markets_str else ""
+
+                logger.warning(f"Skipping download of track '{track_name_for_log}' (ID: {track_id_for_log}) in album '{album.album_name}' due to {error_type}{market_log_info}: {error_message}")
+                
+                failed_track_link = f"https://deezer.com/track/{track_id_for_log}" if track_id_for_log else self.__preferences.link # Fallback to album link
+                
+                # current_track_constructed_metadata is already the error_marker dict
+                track = Track(
+                    tags=current_track_constructed_metadata, 
+                    song_path=None, file_format=None, quality=None, 
+                    link=failed_track_link, 
+                    ids=track_id_for_log
+                )
+                track.success = False
+                track.error_message = error_message
+                tracks.append(track)
+                # Optionally, report progress for this failed track within the album context here
+                continue # to the next track in the album
+
             # Merge album-level metadata (only add fields not already set in c_song_metadata)
-            for key, item in self.__song_metadata_items:
-                if key not in c_song_metadata:
-                    if isinstance(item, list):
-                        c_song_metadata[key] = self.__song_metadata[key][a] if len(self.__song_metadata[key]) > a else 'Unknown'
-                    else:
-                        c_song_metadata[key] = self.__song_metadata[key]
+            # This was the old logic, current_track_constructed_metadata should be fairly complete now or an error dict.
+            # for key, item in self.__song_metadata_items:
+            #     if key not in current_track_constructed_metadata:
+            #         if isinstance(item, list):
+            #             current_track_constructed_metadata[key] = self.__song_metadata[key][a] if len(self.__song_metadata[key]) > a else 'Unknown'
+            #         else:
+            #             current_track_constructed_metadata[key] = self.__song_metadata[key]
             
             # Continue with the rest of your processing (media handling, download, etc.)
-            c_infos_dw['media_url'] = medias[a]
+            c_infos_dw_item['media_url'] = medias[a] # medias is from Download_JOB.check_sources(infos_dw, ...)
             c_preferences = deepcopy(self.__preferences)
-            c_preferences.song_metadata = c_song_metadata.copy()
-            c_preferences.ids = c_infos_dw['SNG_ID']
+            c_preferences.song_metadata = current_track_constructed_metadata.copy()
+            c_preferences.ids = c_infos_dw_item['SNG_ID']
             c_preferences.track_number = track_number
             
             # Add additional information for consistent parent info
@@ -1093,22 +1126,41 @@ class DW_ALBUM:
             c_preferences.total_tracks = total_tracks
             c_preferences.link = f"https://deezer.com/track/{c_preferences.ids}"
             
+            current_track_object = None
             try:
-                track = EASY_DW(c_infos_dw, c_preferences, parent='album').download_try()
-            except TrackNotFound:
-                try:
-                    song = f"{c_song_metadata['music']} - {c_song_metadata.get('artist', self.__song_metadata['artist'])}"
-                    ids = API.not_found(song, c_song_metadata['music'])
-                    c_infos_dw = API_GW.get_song_data(ids)
-                    c_media = Download_JOB.check_sources([c_infos_dw], self.__quality_download)
-                    c_infos_dw['media_url'] = c_media[0]
-                    track = EASY_DW(c_infos_dw, c_preferences, parent='album').download_try()
-                except TrackNotFound:
-                    track = Track(c_song_metadata, None, None, None, None, None)
-                    track.success = False
-                    track.error_message = f"Track not found after fallback attempt for: {song}" 
-                    logger.warning(f"Track not found: {song} :( Details: {track.error_message}. URL: {c_preferences.link if c_preferences else 'N/A'}")
-            tracks.append(track)
+                # This is where EASY_DW().easy_dw() or EASY_DW().download_try() is effectively called
+                current_track_object = EASY_DW(c_infos_dw_item, c_preferences, parent='album').easy_dw()
+
+            except TrackNotFound as e_tnf:
+                logger.error(f"Track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' by '{c_preferences.song_metadata.get('artist', 'Unknown Artist')}' (Album: {album.album_name}) failed: {str(e_tnf)}")
+                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+                current_track_object.success = False
+                current_track_object.error_message = str(e_tnf)
+            except QualityNotFound as e_qnf:
+                logger.error(f"Quality issue for track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' (Album: {album.album_name}): {str(e_qnf)}")
+                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+                current_track_object.success = False
+                current_track_object.error_message = str(e_qnf)
+            except requests.exceptions.ConnectionError as e_conn:
+                logger.error(f"Connection error for track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' (Album: {album.album_name}): {str(e_conn)}")
+                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+                current_track_object.success = False
+                current_track_object.error_message = str(e_conn) # Store specific connection error
+            except Exception as e_general: # Catch any other unexpected error during this track's processing
+                logger.error(f"Unexpected error for track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' (Album: {album.album_name}): {str(e_general)}")
+                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+                current_track_object.success = False
+                current_track_object.error_message = str(e_general)
+            
+            if current_track_object:
+                tracks.append(current_track_object)
+            else: # Should not happen if exceptions are caught, but as a fallback
+                logger.error(f"Track object was not created for SNG_ID {c_infos_dw_item['SNG_ID']} in album {album.album_name}. Skipping.")
+                # Create a generic failed track to ensure list length matches expectation if needed elsewhere
+                failed_placeholder = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+                failed_placeholder.success = False
+                failed_placeholder.error_message = "Track processing failed to produce a result object."
+                tracks.append(failed_placeholder)
 
         # Save album cover image
         if self.__preferences.save_cover and album.image and album_base_directory:
@@ -1137,7 +1189,7 @@ class DW_ALBUM:
             "status": "done",
             "total_tracks": total_tracks,
             "title": album_name,
-            "url": f"https://deezer.com/album/{self.__ids}"
+            "url": album_link_for_report # Use the actual album link
         })
         
         return album
@@ -1198,37 +1250,117 @@ class DW_PLAYLIST:
         )
 
         # Process each track
-        for idx, (c_infos_dw, c_media, c_song_metadata) in enumerate(zip(infos_dw, medias, self.__song_metadata), 1):
+        for idx, (c_infos_dw_item, c_media, c_song_metadata_item) in enumerate(zip(infos_dw, medias, self.__song_metadata), 1):
 
-            # Skip if song metadata is not valid
-            if type(c_song_metadata) is str:
+            # Skip if song metadata indicates an error (e.g., from market availability or NoDataApi)
+            if isinstance(c_song_metadata_item, dict) and 'error_type' in c_song_metadata_item:
+                track_name = c_song_metadata_item.get('name', 'Unknown Track')
+                track_ids = c_song_metadata_item.get('ids')
+                error_message = c_song_metadata_item.get('message', 'Unknown error.')
+                error_type = c_song_metadata_item.get('error_type', 'UnknownError')
+                # market_info = f" (Market: {self.__preferences.market})" if self.__preferences.market and error_type == 'MarketAvailabilityError' else ""
+                # Construct market_info string based on actual checked_markets from error dict or preferences fallback
+                checked_markets_str = ""
+                if error_type == 'MarketAvailabilityError':
+                    # Prefer checked_markets from the error dict if available
+                    if 'checked_markets' in c_song_metadata_item and c_song_metadata_item['checked_markets']:
+                        checked_markets_str = c_song_metadata_item['checked_markets']
+                    # Fallback to preferences.market if not in error dict (though it should be)
+                    elif self.__preferences.market:
+                        if isinstance(self.__preferences.market, list):
+                            checked_markets_str = ", ".join([m.upper() for m in self.__preferences.market])
+                        elif isinstance(self.__preferences.market, str):
+                            checked_markets_str = self.__preferences.market.upper()
+                market_log_info = f" (Market(s): {checked_markets_str})" if checked_markets_str else ""
+
+                logger.warning(f"Skipping download for track '{track_name}' (ID: {track_ids}) from playlist '{playlist_name_sanitized}' due to {error_type}{market_log_info}: {error_message}")
+                
+                failed_track_link = f"https://deezer.com/track/{track_ids}" if track_ids else self.__preferences.link # Fallback to playlist link
+                                
+                # c_song_metadata_item is the error dict, use it as tags for the Track object
+                track = Track(
+                    tags=c_song_metadata_item, 
+                    song_path=None, file_format=None, quality=None, 
+                    link=failed_track_link, 
+                    ids=track_ids
+                )
+                track.success = False
+                track.error_message = error_message
+                tracks.append(track)
+                # Optionally, report progress for this failed track within the playlist context here
+                continue # Move to the next track in the playlist
+
+            # Original check for string type, should be less common if API returns dicts for errors
+            if type(c_song_metadata_item) is str: 
+                logger.warning(f"Track metadata is a string for a track in playlist '{playlist_name_sanitized}': '{c_song_metadata_item}'. Skipping.")
+                # Create a basic failed track object if metadata is just a string error
+                # This is a fallback, ideally c_song_metadata_item would be an error dict
+                error_placeholder_tags = {'name': 'Unknown Track (metadata error)', 'artist': 'Unknown Artist', 'error_type': 'StringError', 'message': c_song_metadata_item}
+                track = Track(
+                    tags=error_placeholder_tags,
+                    song_path=None, file_format=None, quality=None,
+                    link=self.__preferences.link, # Playlist link
+                    ids=None # No specific ID available from string error
+                )
+                track.success = False
+                track.error_message = c_song_metadata_item
+                tracks.append(track)
                 continue
 
-            c_infos_dw['media_url'] = c_media
+            c_infos_dw_item['media_url'] = c_media
             c_preferences = deepcopy(self.__preferences)
-            c_preferences.ids = c_infos_dw['SNG_ID']
-            c_preferences.song_metadata = c_song_metadata
+            c_preferences.ids = c_infos_dw_item['SNG_ID']
+            c_preferences.song_metadata = c_song_metadata_item # This is the full metadata dict for a successful track
             c_preferences.track_number = idx
             c_preferences.total_tracks = total_tracks
 
             # Download the track using the EASY_DW downloader
-            track = EASY_DW(c_infos_dw, c_preferences, parent='playlist').easy_dw()
+            # Wrap this in a try-except block to handle individual track failures
+            current_track_object = None
+            try:
+                current_track_object = EASY_DW(c_infos_dw_item, c_preferences, parent='playlist').easy_dw()
+            except TrackNotFound as e_tnf:
+                logger.error(f"Track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' by '{c_preferences.song_metadata.get('artist', 'Unknown Artist')}' (Playlist: {playlist_name_sanitized}) failed: {str(e_tnf)}")
+                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+                current_track_object.success = False
+                current_track_object.error_message = str(e_tnf)
+            except QualityNotFound as e_qnf:
+                logger.error(f"Quality issue for track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' (Playlist: {playlist_name_sanitized}): {str(e_qnf)}")
+                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+                current_track_object.success = False
+                current_track_object.error_message = str(e_qnf)
+            except requests.exceptions.ConnectionError as e_conn: # Catch connection errors specifically
+                logger.error(f"Connection error for track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' (Playlist: {playlist_name_sanitized}): {str(e_conn)}")
+                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+                current_track_object.success = False
+                current_track_object.error_message = str(e_conn) # Store specific connection error
+            except Exception as e_general: # Catch any other unexpected error during this track's processing
+                logger.error(f"Unexpected error for track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' (Playlist: {playlist_name_sanitized}): {str(e_general)}")
+                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+                current_track_object.success = False
+                current_track_object.error_message = str(e_general)
 
             # Track-level progress reporting is handled in EASY_DW
-
-            # Only log a warning if the track failed and was NOT intentionally skipped
-            if not track.success and not getattr(track, 'was_skipped', False):
-                song = f"{c_song_metadata['music']} - {c_song_metadata['artist']}"
-                error_detail = getattr(track, 'error_message', 'Download failed for unspecified reason.')
-                logger.warning(f"Cannot download '{song}'. Reason: {error_detail} (Link: {track.link or c_preferences.link})")
-
-            tracks.append(track)
+            if current_track_object: # Ensure a track object was created
+                tracks.append(current_track_object)
+                # Only log a warning if the track failed and was NOT intentionally skipped
+                if not current_track_object.success and not getattr(current_track_object, 'was_skipped', False):
+                    # The error logging is now done within the except blocks above, more specifically.
+                    pass # logger.warning(f"Cannot download '{song}'. Reason: {error_detail} (Link: {track.link or c_preferences.link})")
+            else:
+                 # This case should ideally not be reached if exceptions are handled correctly.
+                logger.error(f"Track object was not created for SNG_ID {c_infos_dw_item['SNG_ID']} in playlist {playlist_name_sanitized}. Skipping.")
+                # Create a generic failed track to ensure list length matches expectation if needed elsewhere
+                failed_placeholder = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+                failed_placeholder.success = False
+                failed_placeholder.error_message = "Track processing failed to produce a result object."
+                tracks.append(failed_placeholder)
 
             # --- Append the final track path to the m3u file ---
             # Build a relative path from the playlists directory
-            if track.success and hasattr(track, 'song_path') and track.song_path:
+            if current_track_object and current_track_object.success and hasattr(current_track_object, 'song_path') and current_track_object.song_path:
                 relative_song_path = os.path.relpath(
-                    track.song_path,
+                    current_track_object.song_path,
                     start=os.path.join(self.__output_dir, "playlists")
                 )
                 with open(m3u_path, "a", encoding="utf-8") as m3u_file:

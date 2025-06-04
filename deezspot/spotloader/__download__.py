@@ -1204,31 +1204,123 @@ class DW_PLAYLIST:
         m3u_path = os.path.join(playlist_m3u_dir, f"{playlist_name_sanitized}.m3u")
         if not os.path.exists(m3u_path):
             with open(m3u_path, "w", encoding="utf-8") as m3u_file:
-                m3u_file.write("#EXTM3U\\n")
+                m3u_file.write("#EXTM3U\n")
         # -------------------------------------
 
         playlist = Playlist()
         tracks = playlist.tracks
         for idx, c_song_metadata in enumerate(self.__song_metadata):
+            # Check if c_song_metadata indicates a pre-identified error from metadata fetching stage
+            if isinstance(c_song_metadata, dict) and 'error_type' in c_song_metadata:
+                track_name = c_song_metadata.get('name', 'Unknown Track')
+                track_ids = c_song_metadata.get('ids', None)
+                error_message = c_song_metadata.get('error_message', 'Unknown error during metadata retrieval.')
+                error_type = c_song_metadata.get('error_type', 'UnknownError')
+                
+                logger.warning(f"Skipping download for track '{track_name}' (ID: {track_ids}) from playlist '{playlist_name}' due to {error_type}: {error_message}")
+                
+                # Create a placeholder Track object to represent this failure
+                # The link might not be available or relevant if IDs itself was the issue
+                failed_track_link = f"https://open.spotify.com/track/{track_ids}" if track_ids else None
+                
+                # Basic metadata for the Track object constructor
+                # We use c_song_metadata itself as it contains name, ids, etc.
+                # Ensure it's a dict for Track constructor
+                track_obj_metadata = c_song_metadata if isinstance(c_song_metadata, dict) else {'name': track_name, 'ids': track_ids}
+
+                track = Track(
+                    tags=track_obj_metadata,
+                    song_path=None,
+                    file_format=None,
+                    quality=None,
+                    link=failed_track_link,
+                    ids=track_ids
+                )
+                track.success = False
+                track.error_message = error_message
+                tracks.append(track)
+                continue # Move to the next track in the playlist
+
+            # Original handling for string type (though this should be less common with new error dicts)
             if type(c_song_metadata) is str:
-                print(f"Track not found {c_song_metadata} :(")
+                logger.warning(f"Encountered string as song metadata for a track in playlist '{playlist_name}': {c_song_metadata}. Treating as error.")
+                # Attempt to create a basic Track object with this string as an error message.
+                # This is a fallback for older error reporting styles.
+                error_track_name = "Unknown Track (error)"
+                error_track_ids = None
+                # Try to parse some info if the string is very specific, otherwise use generic.
+                if "Track not found" in c_song_metadata:
+                    # This was an old message format, may not contain structured info.
+                    pass # Keep generic error_track_name for now.
+                
+                track = Track(
+                    tags={'name': error_track_name, 'ids': error_track_ids, 'artist': 'Unknown Artist'}, # Minimal metadata
+                    song_path=None,
+                    file_format=None,
+                    quality=None,
+                    link=None, # No reliable link from just an error string
+                    ids=error_track_ids
+                )
+                track.success = False
+                track.error_message = c_song_metadata # The string itself is the error
+                tracks.append(track)
                 continue
+            
+            # If c_song_metadata is a valid metadata dictionary (no 'error_type')
             c_preferences = deepcopy(self.__preferences)
-            c_preferences.ids = c_song_metadata['ids']
+            c_preferences.ids = c_song_metadata.get('ids') # Use .get for safety, though it should exist
             c_preferences.song_metadata = c_song_metadata
             c_preferences.json_data = self.__json_data  # Pass playlist data for reporting
             c_preferences.track_number = idx + 1  # Track number in the playlist
+            c_preferences.link = f"https://open.spotify.com/track/{c_preferences.ids}" if c_preferences.ids else None
 
-            # Use track-level reporting through EASY_DW
-            track = EASY_DW(c_preferences, parent='playlist').easy_dw()
+            easy_dw_instance = EASY_DW(c_preferences, parent='playlist')
+            track = None # Initialize track for this iteration
 
-            # Only log a warning if the track failed and was NOT intentionally skipped
-            if not track.success and not getattr(track, 'was_skipped', False):
-                song = f"{c_song_metadata['music']} - {c_song_metadata['artist']}"
-                error_detail = getattr(track, 'error_message', 'Download failed for unspecified reason.')
-                logger.warning(f"Cannot download '{song}' from playlist '{playlist_name}'. Reason: {error_detail} (URL: {track.link or c_preferences.link})")
+            try:
+                track = easy_dw_instance.easy_dw()
+            except TrackNotFound as e_track_nf:
+                track = easy_dw_instance.get_no_dw_track() # Retrieve the track instance from EASY_DW
+                # Ensure track object is a valid Track instance and has error info
+                if not isinstance(track, Track): # Fallback if get_no_dw_track didn't return a Track
+                    track = Track(c_song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+                track.success = False # Explicitly set success to False
+                # Ensure error message is set, preferring the one from the exception if track doesn't have one
+                if not getattr(track, 'error_message', None) or str(e_track_nf): # Prioritize exception message if available
+                    track.error_message = str(e_track_nf)
+
+                song_name_log = c_song_metadata.get('music', 'Unknown Song')
+                artist_name_log = c_song_metadata.get('artist', 'Unknown Artist')
+                playlist_name_log = self.__json_data.get('name', 'Unknown Playlist')
+                logger.warning(
+                    f"Failed to download track '{song_name_log}' by '{artist_name_log}' from playlist '{playlist_name_log}'. "
+                    f"Reason: {track.error_message} (URL: {track.link or c_preferences.link})"
+                )
+            except Exception as e_generic:
+                # Catch any other unexpected exceptions during the track download process
+                track = Track(c_song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+                track.success = False
+                track.error_message = f"An unexpected error occurred while processing track: {str(e_generic)}"
+
+                song_name_log = c_song_metadata.get('music', 'Unknown Song')
+                artist_name_log = c_song_metadata.get('artist', 'Unknown Artist')
+                playlist_name_log = self.__json_data.get('name', 'Unknown Playlist')
+                logger.error(
+                    f"Unexpected error downloading track '{song_name_log}' by '{artist_name_log}' from playlist '{playlist_name_log}'. "
+                    f"Reason: {track.error_message} (URL: {track.link or c_preferences.link})"
+                )
+            
+            # Ensure track is not None before appending (should be assigned in try/except)
+            if track is None:
+                # This is a fallback, should ideally not be reached.
+                track = Track(c_song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+                track.success = False
+                track.error_message = "Track processing resulted in an unhandled null track object."
+                logger.error(f"Track '{c_song_metadata.get('music', 'Unknown Track')}' from playlist '{self.__json_data.get('name', 'Unknown Playlist')}' "
+                             f"was not properly processed.")
 
             tracks.append(track)
+
             # --- Append the final track path to the m3u file using a relative path ---
             if track.success and hasattr(track, 'song_path') and track.song_path:
                 # Build the relative path from the playlists directory

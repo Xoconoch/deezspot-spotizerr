@@ -11,6 +11,7 @@ from deezspot.exceptions import (
     NoDataApi,
     QuotaExceeded,
     TrackNotFound,
+    MarketAvailabilityError,
 )
 from deezspot.libutils.logging_utils import logger
 import requests
@@ -222,17 +223,51 @@ class API:
 		image = req_get(image_url).content
 
 		if len(image) == 13:
+			logger.debug(f"Received 13-byte image for md5_image: {md5_image}. Attempting fallback image.")
 			image_url = cls.get_img_url("", size)
 			image = req_get(image_url).content
+			if len(image) == 13:
+				logger.warning(f"Fallback image for md5_image {md5_image} (using empty md5) also resulted in a 13-byte response.")
 
 		return image
 
 	@classmethod
-	def tracking(cls, ids, album = False) -> dict:
+	def tracking(cls, ids, album = False, market = None) -> dict:
 		song_metadata = {}
 		json_track = cls.get_track(ids)
 
-		# Ensure ISRC is always fetched
+		# Market availability check
+		if market:
+			available_countries = json_track.get("available_countries")
+			track_available_in_specified_markets = False
+			markets_checked_str = ""
+
+			if isinstance(market, list):
+				markets_checked_str = ", ".join([m.upper() for m in market])
+				if available_countries:
+					for m_code in market:
+						if m_code.upper() in available_countries:
+							track_available_in_specified_markets = True
+							break # Found in one market, no need to check further
+				else: # available_countries is None or empty
+					track_available_in_specified_markets = False # Cannot be available if API lists no countries
+			elif isinstance(market, str):
+				markets_checked_str = market.upper()
+				if available_countries and market.upper() in available_countries:
+					track_available_in_specified_markets = True
+				else: # available_countries is None or empty, or market not in list
+					track_available_in_specified_markets = False
+			else:
+				logger.warning(f"Market parameter has an unexpected type: {type(market)}. Skipping market check.")
+				track_available_in_specified_markets = True # Default to available if market param is malformed
+
+			if not track_available_in_specified_markets:
+				track_title = json_track.get('title', 'Unknown Title')
+				artist_name = json_track.get('artist', {}).get('name', 'Unknown Artist')
+				error_msg = f"Track '{track_title}' by '{artist_name}' (ID: {ids}) is not available in market(s): '{markets_checked_str}'."
+				logger.warning(error_msg)
+				raise MarketAvailabilityError(message=error_msg)
+
 		song_metadata['isrc'] = json_track.get('isrc', '')
 
 		if not album:
@@ -254,7 +289,6 @@ class API:
 			song_metadata['ar_album'] = "; ".join(ar_album)
 			song_metadata['album'] = album_json['title']
 			song_metadata['label'] = album_json['label']
-			# Ensure UPC is fetched from album data
 			song_metadata['upc'] = album_json.get('upc', '')
 			song_metadata['nb_tracks'] = album_json['nb_tracks']
 
@@ -275,13 +309,12 @@ class API:
 		song_metadata['year'] = convert_to_date(json_track['release_date'])
 		song_metadata['bpm'] = json_track['bpm']
 		song_metadata['duration'] = json_track['duration']
-		# song_metadata['isrc'] = json_track['isrc'] # Already handled above
 		song_metadata['gain'] = json_track['gain']
 
 		return song_metadata
 
 	@classmethod
-	def tracking_album(cls, album_json):
+	def tracking_album(cls, album_json, market = None):
 		song_metadata: dict[
 			str,
 			Union[list, str, int, datetime]
@@ -292,12 +325,11 @@ class API:
 			"discnum": [],
 			"bpm": [],
 			"duration": [],
-			"isrc": [], # Ensure isrc list is present for tracks
+			"isrc": [],
 			"gain": [],
 			"album": album_json['title'],
 			"label": album_json['label'],
 			"year": convert_to_date(album_json['release_date']),
-			# Ensure UPC is fetched at album level
 			"upc": album_json.get('upc', ''),
 			"nb_tracks": album_json['nb_tracks']
 		}
@@ -318,16 +350,76 @@ class API:
 		song_metadata['ar_album'] = "; ".join(ar_album)
 		sm_items = song_metadata.items()
 
-		for track in album_json['tracks']['data']:
-			c_ids = track['id']
-			detas = cls.tracking(c_ids, album = True)
+		for track_info_from_album_json in album_json['tracks']['data']:
+			c_ids = track_info_from_album_json['id']
+			track_title_for_error = track_info_from_album_json.get('title', 'Unknown Track')
+			track_artist_for_error = track_info_from_album_json.get('artist', {}).get('name', 'Unknown Artist')
+			
+			current_track_metadata_or_error = None
+			track_failed = False
 
-			for key, item in sm_items:
-				if type(item) is list:
-					# Ensure ISRC is appended for each track
-					if key == 'isrc':
-						song_metadata[key].append(detas.get('isrc', ''))
+			try:
+				# Get detailed metadata for the current track
+				current_track_metadata_or_error = cls.tracking(c_ids, album=True, market=market)
+			except MarketAvailabilityError as e:
+				market_str = market
+				if isinstance(market, list):
+					market_str = ", ".join([m.upper() for m in market])
+				elif isinstance(market, str):
+					market_str = market.upper()
+				logger.warning(f"Track '{track_title_for_error}' (ID: {c_ids}) in album '{album_json.get('title','Unknown Album')}' not available in market(s) '{market_str}': {e.message}")
+				current_track_metadata_or_error = {
+					'error_type': 'MarketAvailabilityError', 
+					'message': e.message, 
+					'name': track_title_for_error, 
+					'artist': track_artist_for_error, 
+					'ids': c_ids,
+					'checked_markets': market_str # Store the markets that were checked
+				}
+				track_failed = True
+			except NoDataApi as e_nd:
+				logger.warning(f"Track '{track_title_for_error}' (ID: {c_ids}) in album '{album_json.get('title','Unknown Album')}' data not found: {str(e_nd)}")
+				current_track_metadata_or_error = {
+					'error_type': 'NoDataApi', 
+					'message': str(e_nd), 
+					'name': track_title_for_error, 
+					'artist': track_artist_for_error, 
+					'ids': c_ids
+				}
+				track_failed = True
+			except requests.exceptions.ConnectionError as e_conn: # Added to catch connection errors here
+				logger.warning(f"Connection error fetching metadata for track '{track_title_for_error}' (ID: {c_ids}) in album '{album_json.get('title','Unknown Album')}': {str(e_conn)}")
+				current_track_metadata_or_error = {
+				    'error_type': 'ConnectionError',
+				    'message': f"Connection error: {str(e_conn)}",
+				    'name': track_title_for_error,
+				    'artist': track_artist_for_error,
+				    'ids': c_ids
+				}
+				track_failed = True
+			except Exception as e_other_track_meta: # Catch any other unexpected error for this specific track
+				logger.warning(f"Unexpected error fetching metadata for track '{track_title_for_error}' (ID: {c_ids}) in album '{album_json.get('title','Unknown Album')}': {str(e_other_track_meta)}")
+				current_track_metadata_or_error = {
+				    'error_type': 'TrackMetadataError',
+				    'message': str(e_other_track_meta),
+				    'name': track_title_for_error,
+				    'artist': track_artist_for_error,
+				    'ids': c_ids
+				}
+				track_failed = True
+
+			for key, list_template in sm_items:
+				if isinstance(list_template, list):
+					if track_failed:
+						if key == 'music':
+							song_metadata[key].append(current_track_metadata_or_error)
+						elif key == 'artist' and isinstance(current_track_metadata_or_error, dict):
+							song_metadata[key].append(current_track_metadata_or_error.get('artist'))
+						elif key == 'ids' and isinstance(current_track_metadata_or_error, dict):
+							pass
+						else:
+							song_metadata[key].append(None)
 					else:
-						song_metadata[key].append(detas[key])
+						song_metadata[key].append(current_track_metadata_or_error.get(key))
 
 		return song_metadata

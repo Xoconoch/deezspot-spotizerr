@@ -13,7 +13,11 @@ class Track:
 
 		self.tags = tags
 		self.__set_tags()
-		self.song_name = f"{self.music} - {self.artist}"
+
+		music_display = getattr(self, 'music', getattr(self, 'name', "Unknown Track"))
+		artist_display = getattr(self, 'artist', "Unknown Artist")
+		self.song_name = f"{music_display} - {artist_display}"
+
 		self.song_path = song_path
 		self.file_format = file_format
 		self.quality = quality
