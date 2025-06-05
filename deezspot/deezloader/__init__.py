@@ -411,62 +411,55 @@ class DeeLogin:
 
         # Use stored credentials for API calls
         track_json = Spo.get_track(ids)
-        external_ids = track_json['external_ids']
+        external_ids = track_json.get('external_ids')
 
-        if not external_ids:
-            msg = f"⚠ The track \"{track_json['name']}\" can't be converted to Deezer link :( ⚠"
+        if not external_ids or 'isrc' not in external_ids:
+            msg = f"⚠ The track '{track_json.get('name', 'Unknown Track')}' has no ISRC and can't be converted to Deezer link :( ⚠"
+            logger.warning(msg)
             raise TrackNotFound(
                 url=link_track,
                 message=msg
             )
 
-        isrc = f"isrc:{external_ids['isrc']}"
-        track_json_dee = API.get_track(isrc)
+        isrc_code = external_ids['isrc']
+        # Use the helper method
+        try:
+            return self.convert_isrc_to_dee_link_track(isrc_code)
+        except TrackNotFound as e:
+            logger.error(f"Failed to convert Spotify track {link_track} (ISRC: {isrc_code}) to Deezer link: {e.message}")
+            # Re-raise with the original link_track for context
+            raise TrackNotFound(url=link_track, message=f"Failed to find Deezer equivalent for ISRC {isrc_code} from Spotify track {link_track}: {e.message}") from e
+
+    def convert_isrc_to_dee_link_track(self, isrc_code: str) -> str:
+
+        if not isinstance(isrc_code, str) or not isrc_code:
+            raise ValueError("ISRC code must be a non-empty string.")
+
+        isrc_query = f"isrc:{isrc_code}"
+        logger.debug(f"Attempting Deezer track search with ISRC query: {isrc_query}")
+
+        try:
+            track_json_dee = API.get_track(isrc_query)
+        except NoDataApi:
+            msg = f"⚠ The track with ISRC \"{isrc_code}\" can't be found on Deezer :( ⚠"
+            logger.warning(msg)
+            raise TrackNotFound(
+                # Passing the ISRC as 'url' for consistency, though it's not a URL
+                url=f"isrc:{isrc_code}",
+                message=msg
+            )
+        
+        if not track_json_dee or 'link' not in track_json_dee:
+            msg = f"⚠ Deezer API returned no link for ISRC \"{isrc_code}\" :( ⚠"
+            logger.warning(msg)
+            raise TrackNotFound(
+                url=f"isrc:{isrc_code}",
+                message=msg
+            )
+
         track_link_dee = track_json_dee['link']
-
+        logger.info(f"Successfully converted ISRC {isrc_code} to Deezer link: {track_link_dee}")
         return track_link_dee
-
-    def download_trackspo(
-        self, link_track,
-        output_dir=stock_output,
-        quality_download=stock_quality,
-        recursive_quality=stock_recursive_quality,
-        recursive_download=stock_recursive_download,
-        not_interface=stock_not_interface,
-        custom_dir_format=None,
-        custom_track_format=None,
-        pad_tracks=True,
-        initial_retry_delay=30,
-        retry_delay_increase=30,
-        max_retries=5,
-        convert_to=None,
-        bitrate=None,
-        save_cover=stock_save_cover,
-        market=stock_market
-    ) -> Track:
-
-        track_link_dee = self.convert_spoty_to_dee_link_track(link_track)
-
-        track = self.download_trackdee(
-            track_link_dee,
-            output_dir=output_dir,
-            quality_download=quality_download,
-            recursive_quality=recursive_quality,
-            recursive_download=recursive_download,
-            not_interface=not_interface,
-            custom_dir_format=custom_dir_format,
-            custom_track_format=custom_track_format,
-            pad_tracks=pad_tracks,
-            initial_retry_delay=initial_retry_delay,
-            retry_delay_increase=retry_delay_increase,
-            max_retries=max_retries,
-            convert_to=convert_to,
-            bitrate=bitrate,
-            save_cover=save_cover,
-            market=market
-        )
-
-        return track
 
     def convert_spoty_to_dee_link_album(self, link_album):
         link_is_valid(link_album)
@@ -546,6 +539,52 @@ class DeeLogin:
             raise AlbumNotFound(f"Failed to convert Spotify album link {link_album} to a Deezer link after all attempts.")
 
         return link_dee
+
+    def _convert_upc_to_dee_link_album(self, upc_code: str) -> str | None:
+        """Helper to find Deezer album by UPC."""
+        if not upc_code:
+            return None
+        logger.debug(f"Attempting Deezer album search with UPC: {upc_code}")
+        try:
+            deezer_album_info = API.get_album(f"upc:{upc_code}")
+            if isinstance(deezer_album_info, dict) and 'link' in deezer_album_info:
+                link_dee = deezer_album_info['link']
+                logger.info(f"Found Deezer album via UPC ({upc_code}): {link_dee}")
+                return link_dee
+        except NoDataApi:
+            logger.debug(f"No Deezer album found for UPC: {upc_code}")
+        except Exception as e_upc_search:
+            logger.warning(f"Error during Deezer API call for UPC {upc_code}: {e_upc_search}")
+        return None
+
+    def _convert_isrc_to_dee_link_album(self, isrc_code: str, spotify_album_name_for_log: str, spotify_total_tracks: int) -> str | None:
+        """Helper to find Deezer album by ISRC, matching track count."""
+        if not isrc_code:
+            return None
+        logger.debug(f"For Spotify album '{spotify_album_name_for_log}', attempting Deezer track search with ISRC: {isrc_code} for album matching")
+        try:
+            deezer_track_info = API.get_track(f"isrc:{isrc_code}")
+            if isinstance(deezer_track_info, dict) and 'album' in deezer_track_info:
+                deezer_album_preview = deezer_track_info['album']
+                if isinstance(deezer_album_preview, dict) and 'id' in deezer_album_preview:
+                    deezer_album_id = deezer_album_preview['id']
+                    # Now fetch the full album details to check track count
+                    full_deezer_album_info = API.get_album(deezer_album_id)
+                    if (
+                        isinstance(full_deezer_album_info, dict) and
+                        full_deezer_album_info.get('nb_tracks') == spotify_total_tracks and
+                        'link' in full_deezer_album_info
+                    ):
+                        link_dee = full_deezer_album_info['link']
+                        logger.info(f"Found matching Deezer album for '{spotify_album_name_for_log}' via ISRC ({isrc_code}). Spotify tracks: {spotify_total_tracks}, Deezer tracks: {full_deezer_album_info.get('nb_tracks')}. Link: {link_dee}")
+                        return link_dee
+                    else:
+                        logger.debug(f"Deezer album (ID: {deezer_album_id}, Title: {full_deezer_album_info.get('title', 'N/A') if isinstance(full_deezer_album_info, dict) else 'N/A'}) found via ISRC {isrc_code} for Spotify album '{spotify_album_name_for_log}', but track count mismatch or no link. Spotify tracks: {spotify_total_tracks}, Deezer tracks: {full_deezer_album_info.get('nb_tracks') if isinstance(full_deezer_album_info, dict) else 'N/A'}")
+        except NoDataApi:
+            logger.debug(f"No Deezer track (and thus no album context) found for ISRC: {isrc_code} during album search for '{spotify_album_name_for_log}'.")
+        except Exception as e_isrc_search:
+            logger.warning(f"Error during Deezer search for ISRC {isrc_code} for album matching for '{spotify_album_name_for_log}': {e_isrc_search}")
+        return None
 
     def download_albumspo(
         self, link_album,
