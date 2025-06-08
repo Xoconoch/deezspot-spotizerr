@@ -586,6 +586,48 @@ class DeeLogin:
             logger.warning(f"Error during Deezer search for ISRC {isrc_code} for album matching for '{spotify_album_name_for_log}': {e_isrc_search}")
         return None
 
+    def download_trackspo(
+        self, link_track,
+        output_dir=stock_output,
+        quality_download=stock_quality,
+        recursive_quality=stock_recursive_quality,
+        recursive_download=stock_recursive_download,
+        not_interface=stock_not_interface,
+        custom_dir_format=None,
+        custom_track_format=None,
+        pad_tracks=True,
+        initial_retry_delay=30,
+        retry_delay_increase=30,
+        max_retries=5,
+        convert_to=None,
+        bitrate=None,
+        save_cover=stock_save_cover,
+        market=stock_market
+    ) -> Track:
+
+        link_dee = self.convert_spoty_to_dee_link_track(link_track)
+
+        track = self.download_trackdee(
+            link_dee,
+            output_dir=output_dir,
+            quality_download=quality_download,
+            recursive_quality=recursive_quality,
+            recursive_download=recursive_download,
+            not_interface=not_interface,
+            custom_dir_format=custom_dir_format,
+            custom_track_format=custom_track_format,
+            pad_tracks=pad_tracks,
+            initial_retry_delay=initial_retry_delay,
+            retry_delay_increase=retry_delay_increase,
+            max_retries=max_retries,
+            convert_to=convert_to,
+            bitrate=bitrate,
+            save_cover=save_cover,
+            market=market
+        )
+
+        return track
+
     def download_albumspo(
         self, link_album,
         output_dir=stock_output,
