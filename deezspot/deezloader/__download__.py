@@ -319,6 +319,8 @@ class EASY_DW:
             current_track = None
             total_tracks = None
             summary = None
+            current_track_val = None  # Initialize to avoid reference error
+            total_tracks_val = None   # Initialize to avoid potential similar issues
 
             # Add parent info based on parent type
             if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
@@ -353,6 +355,8 @@ class EASY_DW:
                 album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('album_artist', ''))
                 total_tracks = getattr(self.__preferences, 'total_tracks', 0)
                 current_track = getattr(self.__preferences, 'track_number', 0)
+                current_track_val = current_track  # Ensure current_track_val is set
+                total_tracks_val = total_tracks    # Ensure total_tracks_val is set
                 
                 # Format for album-parented tracks exactly as required
                 parent = {
