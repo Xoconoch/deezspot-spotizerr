@@ -617,7 +617,7 @@ class EASY_DW:
                     report_type="track",
                     song=self.__song_metadata.get("music", ""),
                     artist=self.__song_metadata.get("artist", ""),
-                    status="progress",
+                    status="initializing",
                     url=url,
                     parent=parent,
                     current_track=current_track,
@@ -1563,42 +1563,15 @@ class DW_EPISODE:
                 report_type="episode",
                 song=self.__preferences.song_metadata.get('music', ''),
                 artist=self.__preferences.song_metadata.get('artist', ''),
-                status="progress",
+                status="initializing",
                 url=f"https://www.deezer.com/episode/{self.__ids}",
                 parent=parent
             )
             
             with open(output_path, 'wb') as f:
-                start_time = time.time()
-                last_report_time = 0
-                
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
-                        size = f.write(chunk)
-                        downloaded += size
-                        
-                        # Real-time progress reporting every 0.5 seconds
-                        current_time = time.time()
-                        if self.__real_time_dl and total_size > 0 and current_time - last_report_time >= 0.5:
-                            last_report_time = current_time
-                            percentage = round((downloaded / total_size) * 100, 2)
-                            
-                            parent = {
-                                "type": "show",
-                                "title": self.__preferences.song_metadata.get('artist', ''),
-                                "artist": self.__preferences.song_metadata.get('artist', '')
-                            }
-                            report_progress(
-                                reporter=Download_JOB.progress_reporter,
-                                report_type="episode",
-                                song=self.__preferences.song_metadata.get('music', ''),
-                                artist=self.__preferences.song_metadata.get('artist', ''),
-                                status="real-time",
-                                url=f"https://www.deezer.com/episode/{self.__ids}",
-                                time_elapsed=int((current_time - start_time) * 1000),
-                                progress=percentage,
-                                parent=parent
-                            )
+                        f.write(chunk)
             
             episode = Track(
                 self.__preferences.song_metadata,

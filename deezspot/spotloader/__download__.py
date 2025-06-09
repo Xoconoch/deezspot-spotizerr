@@ -148,6 +148,30 @@ class EASY_DW:
         self.__c_episode.md5_image = self.__ids
         self.__c_episode.set_fallback_ids(self.__fallback_ids)
 
+    def _get_parent_info(self):
+        parent_info = None
+        total_tracks_val = None
+        if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
+            playlist_data = self.__preferences.json_data
+            total_tracks_val = playlist_data.get('tracks', {}).get('total', 'unknown')
+            parent_info = {
+                "type": "playlist",
+                "name": playlist_data.get('name', 'unknown'),
+                "owner": playlist_data.get('owner', {}).get('display_name', 'unknown'),
+                "total_tracks": total_tracks_val,
+                "url": f"https://open.spotify.com/playlist/{playlist_data.get('id', '')}"
+            }
+        elif self.__parent == "album":
+            total_tracks_val = self.__song_metadata.get('nb_tracks', 0)
+            parent_info = {
+                "type": "album",
+                "title": self.__song_metadata.get('album', ''),
+                "artist": self.__song_metadata.get('album_artist', self.__song_metadata.get('ar_album', '')),
+                "total_tracks": total_tracks_val,
+                "url": f"https://open.spotify.com/album/{self.__song_metadata.get('album_id', '')}"
+            }
+        return parent_info, total_tracks_val
+
     def __convert_audio(self) -> None:
         # First, handle Spotify's OGG to standard format conversion (always needed)
         # self.__song_path is initially the path for the .ogg file (e.g., song.ogg)
@@ -327,25 +351,7 @@ class EASY_DW:
             self.__c_track.success = True # Mark as success because the desired file is available
             self.__c_track.was_skipped = True
 
-            parent_info = None
-            playlist_data = None
-            total_tracks_val = None
-
-            if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
-                playlist_data = self.__preferences.json_data
-                total_tracks_val = playlist_data.get('tracks', {}).get('total', 'unknown')
-                parent_info = {
-                    "type": "playlist",
-                    "name": playlist_data.get('name', 'unknown'),
-                    "owner": playlist_data.get('owner', {}).get('display_name', 'unknown')
-                }
-            elif self.__parent == "album":
-                total_tracks_val = self.__song_metadata.get('nb_tracks', 0)
-                parent_info = {
-                    "type": "album",
-                    "title": self.__song_metadata.get('album', ''),
-                    "artist": self.__song_metadata.get('album_artist', self.__song_metadata.get('ar_album', ''))
-                }
+            parent_info, total_tracks_val = self._get_parent_info()
             
             summary_data = {
                 "successful_tracks": [],
@@ -373,6 +379,23 @@ class EASY_DW:
             )
             return self.__c_track
 
+        # Report initializing status for the track download
+        parent_info, total_tracks_val = self._get_parent_info()
+        report_progress(
+            reporter=Download_JOB.progress_reporter,
+            report_type="track",
+            status="initializing",
+            song=current_title,
+            artist=current_artist,
+            album=current_album,
+            url=self.__link,
+            convert_to=self.__preferences.convert_to,
+            bitrate=self.__preferences.bitrate,
+            parent=parent_info,
+            current_track=getattr(self.__preferences, 'track_number', None),
+            total_tracks=total_tracks_val,
+        )
+        
         # If track does not exist in the desired final format, proceed with download/conversion
         retries = 0
         # Use the customizable retry parameters
@@ -426,29 +449,6 @@ class EASY_DW:
                                     if current_percentage > self._last_reported_percentage:
                                         self._last_reported_percentage = current_percentage
                                         
-                                        parent_info = None
-                                        playlist_data = None
-                                        total_tracks_val = None
-                                        if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
-                                            playlist_data = self.__preferences.json_data
-                                            total_tracks_val = playlist_data.get('tracks', {}).get('total', 'unknown')
-                                            parent_info = {
-                                                "type": "playlist",
-                                                "name": playlist_data.get('name', 'unknown'),
-                                                "owner": playlist_data.get('owner', {}).get('display_name', 'unknown'),
-                                                "total_tracks": total_tracks_val,
-                                                "url": f"https://open.spotify.com/playlist/{playlist_data.get('id', '')}"
-                                            }
-                                        elif self.__parent == "album":
-                                            total_tracks_val = self.__song_metadata.get('nb_tracks', 0)
-                                            parent_info = {
-                                                "type": "album",
-                                                "title": self.__song_metadata.get('album', ''),
-                                                "artist": self.__song_metadata.get('album_artist', self.__song_metadata.get('ar_album', '')),
-                                                "total_tracks": total_tracks_val,
-                                                "url": f"https://open.spotify.com/album/{self.__song_metadata.get('album_id', '')}"
-                                            }
-
                                         report_progress(
                                             reporter=Download_JOB.progress_reporter,
                                             report_type="track",
@@ -626,29 +626,6 @@ class EASY_DW:
             else:
                 error_msg = f"Audio conversion failed: {original_error_str}"
             
-            parent_info = None
-            playlist_data = None
-            total_tracks_val = None
-            if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
-                playlist_data = self.__preferences.json_data
-                total_tracks_val = playlist_data.get('tracks', {}).get('total', 'unknown')
-                parent_info = {
-                    "type": "playlist",
-                    "name": playlist_data.get('name', 'unknown'),
-                    "owner": playlist_data.get('owner', {}).get('display_name', 'unknown'),
-                    "total_tracks": total_tracks_val,
-                    "url": f"https://open.spotify.com/playlist/{playlist_data.get('id', '')}"
-                }
-            elif self.__parent == "album":
-                total_tracks_val = self.__song_metadata.get('nb_tracks', 0)
-                parent_info = {
-                    "type": "album",
-                    "title": self.__song_metadata.get('album', ''),
-                    "artist": self.__song_metadata.get('album_artist', self.__song_metadata.get('ar_album', '')),
-                    "total_tracks": total_tracks_val,
-                    "url": f"https://open.spotify.com/album/{self.__song_metadata.get('album_id', '')}"
-                }
-            
             report_progress(
                 reporter=Download_JOB.progress_reporter,
                 report_type="track",
@@ -708,8 +685,7 @@ class EASY_DW:
         # Create done status report
         song = self.__song_metadata.get("music", "")
         artist = self.__song_metadata.get("artist", "")
-        parent_info = None
-        total_tracks_val = None
+        parent_info, total_tracks_val = self._get_parent_info()
         current_track_val = None
         summary_data = None
 
@@ -717,23 +693,9 @@ class EASY_DW:
             playlist_data = self.__preferences.json_data
             total_tracks_val = playlist_data.get('tracks', {}).get('total', 'unknown')
             current_track_val = getattr(self.__preferences, 'track_number', 0)
-            parent_info = {
-                "type": "playlist",
-                "name": playlist_data.get('name', 'unknown'),
-                "owner": playlist_data.get('owner', {}).get('display_name', 'unknown'),
-                "total_tracks": total_tracks_val,
-                "url": f"https://open.spotify.com/playlist/{playlist_data.get('id', '')}"
-            }
         elif self.__parent == "album":
             total_tracks_val = self.__song_metadata.get('nb_tracks', 0)
             current_track_val = getattr(self.__preferences, 'track_number', 0)
-            parent_info = {
-                "type": "album",
-                "title": self.__song_metadata.get('album', ''),
-                "artist": self.__song_metadata.get('album_artist', self.__song_metadata.get('ar_album', '')),
-                "total_tracks": total_tracks_val,
-                "url": f"https://open.spotify.com/album/{self.__song_metadata.get('album_id', '')}"
-            }
 
         if self.__parent is None:
             summary_data = {

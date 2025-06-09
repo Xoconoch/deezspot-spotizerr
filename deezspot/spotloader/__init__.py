@@ -156,11 +156,11 @@ class SpoLogin:
                     "total_failed": 1
                 }
                 report_progress(
-                    reporter="ProgressReporter",
+                    reporter=self.progress_reporter,
                     report_type="track",
                     song=track_info['name'],
                     artist=track_info['artist'],
-                    status="failed",
+                    status="error",
                     url=link_track,
                     error=str(e),
                     summary=summary
@@ -186,11 +186,11 @@ class SpoLogin:
                     "total_failed": 1
                 }
                 report_progress(
-                    reporter="ProgressReporter",
+                    reporter=self.progress_reporter,
                     report_type="track",
                     song=track_info['name'],
                     artist=track_info['artist'],
-                    status="failed",
+                    status="error",
                     url=link_track,
                     error=str(e),
                     summary=summary
