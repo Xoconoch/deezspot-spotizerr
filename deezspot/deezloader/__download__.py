@@ -323,17 +323,30 @@ class EASY_DW:
             # Add parent info based on parent type
             if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
                 playlist_data = self.__preferences.json_data
-                playlist_name = playlist_data.get('title', 'unknown')
-                total_tracks = getattr(self.__preferences, 'total_tracks', 0)
-                current_track = getattr(self.__preferences, 'track_number', 0)
+                is_spotify_playlist = 'display_name' in playlist_data.get('owner', {})
                 
-                # Format for playlist-parented tracks exactly as required
+                if is_spotify_playlist:
+                    playlist_name = playlist_data.get('name', 'unknown')
+                    owner = playlist_data.get('owner', {}).get('display_name', 'unknown')
+                    total_tracks = playlist_data.get('tracks', {}).get('total', 0)
+                    playlist_id = playlist_data.get('id', '')
+                    url = f"https://open.spotify.com/playlist/{playlist_id}"
+                else: # Deezer logic
+                    playlist_name = playlist_data.get('title', 'unknown')
+                    owner = playlist_data.get('creator', {}).get('name', 'unknown')
+                    total_tracks = getattr(self.__preferences, 'total_tracks', 0)
+                    playlist_id = playlist_data.get('id', '')
+                    url = f"https://deezer.com/playlist/{playlist_id}"
+
+                total_tracks_val = getattr(self.__preferences, 'total_tracks', total_tracks)
+                current_track_val = getattr(self.__preferences, 'track_number', 0)
+
                 parent = {
                     "type": "playlist",
                     "name": playlist_name,
-                    "owner": playlist_data.get('creator', {}).get('name', 'unknown'),
-                    "total_tracks": total_tracks,
-                    "url": f"https://deezer.com/playlist/{self.__preferences.json_data.get('id', '')}"
+                    "owner": owner,
+                    "total_tracks": total_tracks_val,
+                    "url": url
                 }
             elif self.__parent == "album":
                 album_name = self.__song_metadata.get('album', '')
@@ -375,8 +388,8 @@ class EASY_DW:
                 convert_to=self.__convert_to,
                 bitrate=self.__bitrate,
                 parent=parent,
-                current_track=current_track,
-                total_tracks=total_tracks,
+                current_track=current_track_val,
+                total_tracks=total_tracks_val,
                 summary=summary
             )
             # self.__c_track might not be fully initialized here if __write_track() hasn't been called
@@ -415,20 +428,33 @@ class EASY_DW:
                     parent = None
                     current_track = None
                     total_tracks = None
+                    summary = None
 
                     spotify_url = getattr(self.__preferences, 'spotify_url', None)
                     url = spotify_url if spotify_url else self.__link
 
                     if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
                         playlist_data = self.__preferences.json_data
+                        is_spotify_playlist = 'display_name' in playlist_data.get('owner', {})
+                        if is_spotify_playlist:
+                            playlist_name = playlist_data.get('name', 'unknown')
+                            owner = playlist_data.get('owner', {}).get('display_name', 'unknown')
+                            playlist_id = playlist_data.get('id', '')
+                            playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
+                        else: # Deezer logic
+                            playlist_name = playlist_data.get('title', 'unknown')
+                            owner = playlist_data.get('creator', {}).get('name', 'unknown')
+                            playlist_id = playlist_data.get('id', '')
+                            playlist_url = f"https://deezer.com/playlist/{playlist_data.get('id', '')}"
+
                         total_tracks = getattr(self.__preferences, 'total_tracks', 0)
                         current_track = getattr(self.__preferences, 'track_number', 0)
                         parent = {
                             "type": "playlist",
-                            "name": playlist_data.get('title', 'unknown'),
-                            "owner": playlist_data.get('creator', {}).get('name', 'unknown'),
+                            "name": playlist_name,
+                            "owner": owner,
                             "total_tracks": total_tracks,
-                            "url": f"https://deezer.com/playlist/{playlist_data.get('id', '')}"
+                            "url": playlist_url
                         }
                     elif self.__parent == "album":
                         album_name = self.__song_metadata.get('album', '')
@@ -442,18 +468,34 @@ class EASY_DW:
                             "total_tracks": total_tracks,
                             "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"
                         }
+                    
+                    if self.__parent is None:
+                        track_info = {
+                            "name": self.__song_metadata.get('music', 'Unknown Track'),
+                            "artist": self.__song_metadata.get('artist', 'Unknown Artist')
+                        }
+                        summary = {
+                            "successful_tracks": [f"{track_info['name']} - {track_info['artist']}"],
+                            "skipped_tracks": [],
+                            "failed_tracks": [],
+                            "total_successful": 1,
+                            "total_skipped": 0,
+                            "total_failed": 0,
+                        }
 
                     report_progress(
                         reporter=Download_JOB.progress_reporter,
                         report_type="track",
                         song=self.__song_metadata['music'],
                         artist=self.__song_metadata['artist'],
+                        album=self.__song_metadata.get("album", ""),
                         status="done",
                         url=url,
                         parent=parent,
                         current_track=current_track,
                         total_tracks=total_tracks,
-                        convert_to=self.__convert_to
+                        convert_to=self.__convert_to,
+                        summary=summary
                     )
 
         except Exception as e: # Covers failures within download_try or download_episode_try
@@ -589,15 +631,26 @@ class EASY_DW:
                 
                 if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
                     playlist_data = self.__preferences.json_data
-                    playlist_name = playlist_data.get('title', 'unknown')
+                    is_spotify_playlist = 'display_name' in playlist_data.get('owner', {})
+                    if is_spotify_playlist:
+                        playlist_name = playlist_data.get('name', 'unknown')
+                        owner = playlist_data.get('owner', {}).get('display_name', 'unknown')
+                        playlist_id = playlist_data.get('id', '')
+                        playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
+                    else: # Deezer logic
+                        playlist_name = playlist_data.get('title', 'unknown')
+                        owner = playlist_data.get('creator', {}).get('name', 'unknown')
+                        playlist_id = playlist_data.get('id', '')
+                        playlist_url = f"https://deezer.com/playlist/{playlist_data.get('id', '')}"
+
                     total_tracks = getattr(self.__preferences, 'total_tracks', 0)
                     current_track = getattr(self.__preferences, 'track_number', 0)
                     parent = {
                         "type": "playlist",
                         "name": playlist_name,
-                        "owner": playlist_data.get('creator', {}).get('name', 'unknown'),
+                        "owner": owner,
                         "total_tracks": total_tracks,
-                        "url": f"https://deezer.com/playlist/{self.__preferences.json_data.get('id', '')}"
+                        "url": playlist_url
                     }
                 elif self.__parent == "album":
                     album_name = self.__song_metadata.get('album', '')
@@ -617,6 +670,7 @@ class EASY_DW:
                     report_type="track",
                     song=self.__song_metadata.get("music", ""),
                     artist=self.__song_metadata.get("artist", ""),
+                    album=self.__song_metadata.get("album", ""),
                     status="initializing",
                     url=url,
                     parent=parent,
@@ -720,14 +774,25 @@ class EASY_DW:
 
                 if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
                     playlist_data = self.__preferences.json_data
-                    playlist_name = playlist_data.get('title', 'unknown')
+                    is_spotify_playlist = 'display_name' in playlist_data.get('owner', {})
+                    if is_spotify_playlist:
+                        playlist_name = playlist_data.get('name', 'unknown')
+                        owner = playlist_data.get('owner', {}).get('display_name', 'unknown')
+                        playlist_id = playlist_data.get('id', '')
+                        playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
+                    else: # Deezer logic
+                        playlist_name = playlist_data.get('title', 'unknown')
+                        owner = playlist_data.get('creator', {}).get('name', 'unknown')
+                        playlist_id = playlist_data.get('id', '')
+                        playlist_url = f"https://deezer.com/playlist/{playlist_data.get('id', '')}"
+
                     total_tracks = getattr(self.__preferences, 'total_tracks', 0)
                     current_track = getattr(self.__preferences, 'track_number', 0)
                     parent = {
                         "type": "playlist", "name": playlist_name, 
-                        "owner": playlist_data.get('creator', {}).get('name', 'unknown'), 
+                        "owner": owner, 
                         "total_tracks": total_tracks, 
-                        "url": f"https://deezer.com/playlist/{playlist_data.get('id', '')}"
+                        "url": playlist_url
                     }
                 elif self.__parent == "album":
                     album_name = self.__song_metadata.get('album', '')
@@ -938,10 +1003,12 @@ class EASY_DW:
 class DW_TRACK:
     def __init__(
         self,
-        preferences: Preferences
+        preferences: Preferences,
+        parent: str = None
     ) -> None:
 
         self.__preferences = preferences
+        self.__parent = parent
         self.__ids = self.__preferences.ids
         self.__song_metadata = self.__preferences.song_metadata
         self.__quality_download = self.__preferences.quality_download
@@ -956,7 +1023,7 @@ class DW_TRACK:
         infos_dw['media_url'] = media[0]
 
         # For individual tracks, parent is None (not part of album or playlist)
-        track = EASY_DW(infos_dw, self.__preferences, parent=None).easy_dw()
+        track = EASY_DW(infos_dw, self.__preferences, parent=self.__parent).easy_dw()
 
         # Check if track failed but was NOT intentionally skipped
         if not track.success and not getattr(track, 'was_skipped', False):
@@ -967,29 +1034,6 @@ class DW_TRACK:
             current_link = track.link if hasattr(track, 'link') and track.link else self.__preferences.link
             logger.error(f"{error_msg} (Link: {current_link})")
             raise TrackNotFound(message=error_msg, url=current_link)
-
-        if track.success and not getattr(track, 'was_skipped', False):
-            track_info = {
-                "name": track.tags.get('music', 'Unknown Track'),
-                "artist": track.tags.get('artist', 'Unknown Artist')
-            }
-            summary = {
-                "successful_tracks": [f"{track_info['name']} - {track_info['artist']}"],
-                "skipped_tracks": [],
-                "failed_tracks": [],
-                "total_successful": 1,
-                "total_skipped": 0,
-                "total_failed": 0,
-            }
-            report_progress(
-                reporter=Download_JOB.progress_reporter,
-                report_type="track",
-                song=track_info['name'],
-                artist=track_info['artist'],
-                status="done",
-                url=track.link,
-                summary=summary
-            )
 
         return track
 
@@ -1401,6 +1445,8 @@ class DW_PLAYLIST:
             c_preferences.song_metadata = c_song_metadata_item # This is the full metadata dict for a successful track
             c_preferences.track_number = idx
             c_preferences.total_tracks = total_tracks
+            c_preferences.json_data = self.__json_data
+            c_preferences.link = f"https://deezer.com/track/{c_preferences.ids}"
 
             # Download the track using the EASY_DW downloader
             # Wrap this in a try-except block to handle individual track failures

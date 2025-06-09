@@ -105,7 +105,8 @@ class DeeLogin:
         convert_to=None,
         bitrate=None,
         save_cover=stock_save_cover,
-        market=stock_market
+        market=stock_market,
+        playlist_context=None
     ) -> Track:
 
         link_is_valid(link_track)
@@ -171,8 +172,15 @@ class DeeLogin:
         preferences.save_cover = save_cover
         preferences.market = market
 
+        if playlist_context:
+            preferences.json_data = playlist_context['json_data']
+            preferences.track_number = playlist_context['track_number']
+            preferences.total_tracks = playlist_context['total_tracks']
+            preferences.spotify_url = playlist_context['spotify_url']
+
         try:
-            track = DW_TRACK(preferences).dw()
+            parent = 'playlist' if playlist_context else None
+            track = DW_TRACK(preferences, parent=parent).dw()
             return track
         except Exception as e:
             logger.error(f"Failed to download track: {str(e)}")
@@ -211,7 +219,8 @@ class DeeLogin:
         convert_to=None,
         bitrate=None,
         save_cover=stock_save_cover,
-        market=stock_market
+        market=stock_market,
+        playlist_context=None
     ) -> Album:
 
         link_is_valid(link_album)
@@ -251,6 +260,12 @@ class DeeLogin:
         preferences.bitrate = bitrate
         preferences.save_cover = save_cover
         preferences.market = market
+
+        if playlist_context:
+            preferences.json_data = playlist_context['json_data']
+            preferences.track_number = playlist_context['track_number']
+            preferences.total_tracks = playlist_context['total_tracks']
+            preferences.spotify_url = playlist_context['spotify_url']
 
         album = DW_ALBUM(preferences).dw()
 
@@ -631,7 +646,8 @@ class DeeLogin:
         convert_to=None,
         bitrate=None,
         save_cover=stock_save_cover,
-        market=stock_market
+        market=stock_market,
+        playlist_context=None
     ) -> Track:
 
         link_dee = self.convert_spoty_to_dee_link_track(link_track)
@@ -652,7 +668,8 @@ class DeeLogin:
             convert_to=convert_to,
             bitrate=bitrate,
             save_cover=save_cover,
-            market=market
+            market=market,
+            playlist_context=playlist_context
         )
 
         return track
@@ -674,7 +691,8 @@ class DeeLogin:
         convert_to=None,
         bitrate=None,
         save_cover=stock_save_cover,
-        market=stock_market
+        market=stock_market,
+        playlist_context=None
     ) -> Album:
 
         link_dee = self.convert_spoty_to_dee_link_album(link_album)
@@ -693,7 +711,8 @@ class DeeLogin:
             convert_to=convert_to,
             bitrate=bitrate,
             save_cover=save_cover,
-            market=market
+            market=market,
+            playlist_context=playlist_context
         )
 
         return album
@@ -744,6 +763,21 @@ class DeeLogin:
         for index, item in enumerate(playlist_tracks, 1):
             is_track = item.get('track')
             if not is_track:
+                logger.warning(f"Skipping an item in playlist {playlist_name} as it does not appear to be a valid track object.")
+                # Create a placeholder for the failed item
+                failed_track_tags = {
+                    'name': 'Unknown Skipped Item', 
+                    'artist': 'Unknown Artist',
+                    'error_type': 'InvalidItemStructure',
+                    'message': 'Playlist item was not a valid track object.'
+                }
+                failed_track = Track(
+                    tags=failed_track_tags,
+                    song_path=None, file_format=None, quality=None, link=None, ids=None
+                )
+                failed_track.success = False
+                failed_track.error_message = 'Playlist item was not a valid track object.'
+                tracks.append(failed_track)
                 continue
 
             track_info = is_track
@@ -759,6 +793,13 @@ class DeeLogin:
             link_track = external_urls['spotify']
 
             try:
+                # Add context for reporting
+                playlist_context={
+                    'json_data': playlist_json, # spotify json
+                    'track_number': index,
+                    'total_tracks': total_tracks,
+                    'spotify_url': link_track # The individual track's spotify URL
+                }
                 # Download each track individually via the Spotify-to-Deezer conversion method.
                 downloaded_track = self.download_trackspo(
                     link_track,
@@ -776,12 +817,30 @@ class DeeLogin:
                     convert_to=convert_to,
                     bitrate=bitrate,
                     save_cover=save_cover,
-                    market=market
+                    market=market,
+                    playlist_context=playlist_context
                 )
                 tracks.append(downloaded_track)
             except (TrackNotFound, NoDataApi) as e:
                 logger.error(f"Failed to download track: {track_name} - {artist_name}")
-                tracks.append(f"{track_name} - {artist_name}")
+                
+                # Create a proper failed Track object
+                error_message = e.message if hasattr(e, 'message') else str(e)
+                failed_track_tags = {
+                    'name': track_name,
+                    'artist': artist_name,
+                    'error_type': e.__class__.__name__,
+                    'message': error_message
+                }
+                failed_track = Track(
+                    tags=failed_track_tags,
+                    song_path=None, file_format=None, quality=None, 
+                    link=link_track, # The spotify track link
+                    ids=None # We don't have the deezer ID
+                )
+                failed_track.success = False
+                failed_track.error_message = error_message
+                tracks.append(failed_track)
 
         # Done status
         successful_tracks_list = []
