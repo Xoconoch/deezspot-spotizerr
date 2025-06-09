@@ -32,7 +32,7 @@ from deezspot.libutils.utils import (
     save_cover_image,
     __get_dir as get_album_directory,
 )
-from deezspot.libutils.logging_utils import logger
+from deezspot.libutils.logging_utils import logger, report_progress
 from deezspot.libutils.cleanup_utils import (
     register_active_download,
     unregister_active_download,
@@ -57,15 +57,6 @@ class Download_JOB:
     @classmethod
     def set_progress_reporter(cls, reporter):
         cls.progress_reporter = reporter
-        
-    @classmethod
-    def report_progress(cls, progress_data):
-        """Report progress if a reporter is configured."""
-        if cls.progress_reporter:
-            cls.progress_reporter.report(progress_data)
-        else:
-            # Fallback to logger if no reporter is configured
-            logger.info(json.dumps(progress_data))
 
 class EASY_DW:
     def __init__(
@@ -336,47 +327,50 @@ class EASY_DW:
             self.__c_track.success = True # Mark as success because the desired file is available
             self.__c_track.was_skipped = True
 
-            progress_data = {
-                "type": "track",
-                "song": current_title,
-                "artist": current_artist,
-                "status": "skipped",
-                "url": self.__link,
-                "reason": f"Track already exists in desired format at {existing_file_path}",
-                "convert_to": self.__preferences.convert_to, # Reflect user's conversion preference
-                "bitrate": self.__preferences.bitrate      # Reflect user's bitrate preference
-            }
-            
+            parent_info = None
+            playlist_data = None
+            total_tracks_val = None
+
             if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
                 playlist_data = self.__preferences.json_data
-                playlist_name = playlist_data.get('name', 'unknown')
-                total_tracks = playlist_data.get('tracks', {}).get('total', 'unknown')
-                current_track_num = getattr(self.__preferences, 'track_number', 0)
-                progress_data.update({
-                    "current_track": current_track_num,
-                    "total_tracks": total_tracks,
-                    "parent": {
-                        "type": "playlist",
-                        "name": playlist_name,
-                        "owner": playlist_data.get('owner', {}).get('display_name', 'unknown')
-                    }
-                })
+                total_tracks_val = playlist_data.get('tracks', {}).get('total', 'unknown')
+                parent_info = {
+                    "type": "playlist",
+                    "name": playlist_data.get('name', 'unknown'),
+                    "owner": playlist_data.get('owner', {}).get('display_name', 'unknown')
+                }
             elif self.__parent == "album":
-                album_name_meta = self.__song_metadata.get('album', '')
-                album_artist_meta = self.__song_metadata.get('album_artist', self.__song_metadata.get('ar_album', ''))
-                total_tracks_meta = self.__song_metadata.get('nb_tracks', 0)
-                current_track_num = getattr(self.__preferences, 'track_number', 0)
-                progress_data.update({
-                    "current_track": current_track_num,
-                    "total_tracks": total_tracks_meta,
-                    "parent": {
-                        "type": "album",
-                        "title": album_name_meta,
-                        "artist": album_artist_meta
-                    }
-                })
-                
-            Download_JOB.report_progress(progress_data)
+                total_tracks_val = self.__song_metadata.get('nb_tracks', 0)
+                parent_info = {
+                    "type": "album",
+                    "title": self.__song_metadata.get('album', ''),
+                    "artist": self.__song_metadata.get('album_artist', self.__song_metadata.get('ar_album', ''))
+                }
+            
+            summary_data = {
+                "successful_tracks": [],
+                "skipped_tracks": [f"{current_title} - {current_artist}"],
+                "failed_tracks": [],
+                "total_successful": 0,
+                "total_skipped": 1,
+                "total_failed": 0,
+            } if self.__parent is None else None
+
+            report_progress(
+                reporter=Download_JOB.progress_reporter,
+                report_type="track",
+                status="skipped",
+                song=current_title,
+                artist=current_artist,
+                url=self.__link,
+                reason=f"Track already exists in desired format at {existing_file_path}",
+                convert_to=self.__preferences.convert_to,
+                bitrate=self.__preferences.bitrate,
+                current_track=getattr(self.__preferences, 'track_number', None),
+                total_tracks=total_tracks_val,
+                parent=parent_info,
+                summary=summary_data
+            )
             return self.__c_track
 
         # If track does not exist in the desired final format, proceed with download/conversion
@@ -432,59 +426,44 @@ class EASY_DW:
                                     if current_percentage > self._last_reported_percentage:
                                         self._last_reported_percentage = current_percentage
                                         
-                                        # Create real-time progress data
-                                        progress_data = {
-                                            "type": "track",
-                                            "song": self.__song_metadata.get("music", ""),
-                                            "artist": self.__song_metadata.get("artist", ""),
-                                            "status": "real-time",
-                                            "url": self.__link,
-                                            "time_elapsed": int((current_time - start_time) * 1000),
-                                            "progress": current_percentage,
-                                            "convert_to": self.__convert_to,
-                                            "bitrate": self.__bitrate
-                                        }
-                                        
-                                        # Add parent info based on parent type
+                                        parent_info = None
+                                        playlist_data = None
+                                        total_tracks_val = None
                                         if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
                                             playlist_data = self.__preferences.json_data
-                                            playlist_name = playlist_data.get('name', 'unknown')
-                                            total_tracks = playlist_data.get('tracks', {}).get('total', 'unknown')
-                                            current_track = getattr(self.__preferences, 'track_number', 0)
-                                            playlist_owner = playlist_data.get('owner', {}).get('display_name', 'unknown')
-                                            playlist_id = playlist_data.get('id', '')
-                                            
-                                            progress_data.update({
-                                                "current_track": current_track,
-                                                "total_tracks": total_tracks,
-                                                "parent": {
-                                                    "type": "playlist",
-                                                    "name": playlist_name,
-                                                    "owner": playlist_owner,
-                                                    "total_tracks": total_tracks,
-                                                    "url": f"https://open.spotify.com/playlist/{playlist_id}"
-                                                }
-                                            })
+                                            total_tracks_val = playlist_data.get('tracks', {}).get('total', 'unknown')
+                                            parent_info = {
+                                                "type": "playlist",
+                                                "name": playlist_data.get('name', 'unknown'),
+                                                "owner": playlist_data.get('owner', {}).get('display_name', 'unknown'),
+                                                "total_tracks": total_tracks_val,
+                                                "url": f"https://open.spotify.com/playlist/{playlist_data.get('id', '')}"
+                                            }
                                         elif self.__parent == "album":
-                                            album_name = self.__song_metadata.get('album', '')
-                                            album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('ar_album', ''))
-                                            total_tracks = self.__song_metadata.get('nb_tracks', 0)
-                                            current_track = getattr(self.__preferences, 'track_number', 0)
-                                            
-                                            progress_data.update({
-                                                "current_track": current_track,
-                                                "total_tracks": total_tracks,
-                                                "parent": {
-                                                    "type": "album",
-                                                    "title": album_name,
-                                                    "artist": album_artist,
-                                                    "total_tracks": total_tracks,
-                                                    "url": f"https://open.spotify.com/album/{self.__song_metadata.get('album_id', '')}"
-                                                }
-                                            })
-                                        
-                                        # Report the progress
-                                        Download_JOB.report_progress(progress_data)
+                                            total_tracks_val = self.__song_metadata.get('nb_tracks', 0)
+                                            parent_info = {
+                                                "type": "album",
+                                                "title": self.__song_metadata.get('album', ''),
+                                                "artist": self.__song_metadata.get('album_artist', self.__song_metadata.get('ar_album', '')),
+                                                "total_tracks": total_tracks_val,
+                                                "url": f"https://open.spotify.com/album/{self.__song_metadata.get('album_id', '')}"
+                                            }
+
+                                        report_progress(
+                                            reporter=Download_JOB.progress_reporter,
+                                            report_type="track",
+                                            status="real-time",
+                                            song=self.__song_metadata.get("music", ""),
+                                            artist=self.__song_metadata.get("artist", ""),
+                                            url=self.__link,
+                                            time_elapsed=int((current_time - start_time) * 1000),
+                                            progress=current_percentage,
+                                            convert_to=self.__convert_to,
+                                            bitrate=self.__bitrate,
+                                            current_track=getattr(self.__preferences, 'track_number', None),
+                                            total_tracks=total_tracks_val,
+                                            parent=parent_info
+                                        )
                                         
                                     # Rate limiting (if needed)
                                     expected_time = bytes_written / rate_limit
@@ -591,7 +570,24 @@ class EASY_DW:
                         }
                     })
                     
-                Download_JOB.report_progress(progress_data)
+                report_progress(
+                    reporter=Download_JOB.progress_reporter,
+                    report_type="track",
+                    status="retrying",
+                    retry_count=retries,
+                    seconds_left=retry_delay,
+                    song=self.__song_metadata.get('music', ''),
+                    artist=self.__song_metadata.get('artist', ''),
+                    album=self.__song_metadata.get('album', ''),
+                    error=str(e),
+                    url=self.__link,
+                    convert_to=self.__convert_to,
+                    bitrate=self.__bitrate,
+                    current_track=getattr(self.__preferences, 'track_number', None),
+                    total_tracks=total_tracks_val,
+                    parent=parent_info
+                )
+                    
                 if retries >= max_retries or GLOBAL_RETRY_COUNT >= GLOBAL_MAX_RETRIES:
                     # Final cleanup before giving up
                     if os.path.exists(self.__song_path):
@@ -630,59 +626,43 @@ class EASY_DW:
             else:
                 error_msg = f"Audio conversion failed: {original_error_str}"
             
-            # Create standardized error format
-            progress_data = {
-                "type": "track",
-                "status": "error",
-                "song": self.__song_metadata.get('music', ''),
-                "artist": self.__song_metadata.get('artist', ''),
-                "error": error_msg,
-                "url": self.__link,
-                "convert_to": self.__convert_to,
-                "bitrate": self.__bitrate
-            }
-            
-            # Add parent info based on parent type
+            parent_info = None
+            playlist_data = None
+            total_tracks_val = None
             if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
                 playlist_data = self.__preferences.json_data
-                playlist_name = playlist_data.get('name', 'unknown')
-                total_tracks = playlist_data.get('tracks', {}).get('total', 'unknown')
-                current_track = getattr(self.__preferences, 'track_number', 0)
-                playlist_owner = playlist_data.get('owner', {}).get('display_name', 'unknown')
-                playlist_id = playlist_data.get('id', '')
-                
-                progress_data.update({
-                    "current_track": current_track,
-                    "total_tracks": total_tracks,
-                    "parent": {
-                        "type": "playlist",
-                        "name": playlist_name,
-                        "owner": playlist_owner,
-                        "total_tracks": total_tracks,
-                        "url": f"https://open.spotify.com/playlist/{playlist_id}"
-                    }
-                })
+                total_tracks_val = playlist_data.get('tracks', {}).get('total', 'unknown')
+                parent_info = {
+                    "type": "playlist",
+                    "name": playlist_data.get('name', 'unknown'),
+                    "owner": playlist_data.get('owner', {}).get('display_name', 'unknown'),
+                    "total_tracks": total_tracks_val,
+                    "url": f"https://open.spotify.com/playlist/{playlist_data.get('id', '')}"
+                }
             elif self.__parent == "album":
-                album_name = self.__song_metadata.get('album', '')
-                album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('ar_album', ''))
-                total_tracks = self.__song_metadata.get('nb_tracks', 0)
-                current_track = getattr(self.__preferences, 'track_number', 0)
-                album_id = self.__song_metadata.get('album_id', '')
-                
-                progress_data.update({
-                    "current_track": current_track,
-                    "total_tracks": total_tracks,
-                    "parent": {
-                        "type": "album",
-                        "title": album_name,
-                        "artist": album_artist,
-                        "total_tracks": total_tracks,
-                        "url": f"https://open.spotify.com/album/{album_id}"
-                    }
-                })
+                total_tracks_val = self.__song_metadata.get('nb_tracks', 0)
+                parent_info = {
+                    "type": "album",
+                    "title": self.__song_metadata.get('album', ''),
+                    "artist": self.__song_metadata.get('album_artist', self.__song_metadata.get('ar_album', '')),
+                    "total_tracks": total_tracks_val,
+                    "url": f"https://open.spotify.com/album/{self.__song_metadata.get('album_id', '')}"
+                }
             
-            # Report the error
-            Download_JOB.report_progress(progress_data)
+            report_progress(
+                reporter=Download_JOB.progress_reporter,
+                report_type="track",
+                status="error",
+                song=self.__song_metadata.get('music', ''),
+                artist=self.__song_metadata.get('artist', ''),
+                error=error_msg,
+                url=self.__link,
+                convert_to=self.__convert_to,
+                bitrate=self.__bitrate,
+                current_track=getattr(self.__preferences, 'track_number', None),
+                total_tracks=total_tracks_val,
+                parent=parent_info
+            )
             logger.error(f"Audio conversion error: {error_msg}")
             
             # If conversion fails, clean up the .ogg file
@@ -696,10 +676,21 @@ class EASY_DW:
                 self.__convert_audio()
             except Exception as conv_e:
                 # If conversion fails twice, create a final error report
-                error_msg = f"Audio conversion failed after retry for '{self.__song_metadata.get('music', 'Unknown Track')}'. Original error: {str(conv_e)}"
-                progress_data["error"] = error_msg
-                progress_data["status"] = "error"
-                Download_JOB.report_progress(progress_data)
+                error_msg_2 = f"Audio conversion failed after retry for '{self.__song_metadata.get('music', 'Unknown Track')}'. Original error: {str(conv_e)}"
+                report_progress(
+                    reporter=Download_JOB.progress_reporter,
+                    report_type="track",
+                    status="error",
+                    song=self.__song_metadata.get('music', 'Unknown Track'),
+                    artist=self.__song_metadata.get('artist', ''),
+                    error=error_msg_2,
+                    url=self.__link,
+                    convert_to=self.__convert_to,
+                    bitrate=self.__bitrate,
+                    parent=parent_info,
+                    current_track=getattr(self.__preferences, 'track_number', None),
+                    total_tracks=total_tracks_val
+                )
                 logger.error(error_msg)
                 
                 if os.path.exists(self.__song_path):
@@ -714,58 +705,63 @@ class EASY_DW:
             self.__c_track.success = True
             write_tags(self.__c_track)
         
-        # Create done status report using the same format as progress status
-        progress_data = {
-            "type": "track",
-            "song": self.__song_metadata.get("music", ""),
-            "artist": self.__song_metadata.get("artist", ""),
-            "status": "done",
-            "url": self.__link,
-            "convert_to": self.__convert_to,
-            "bitrate": self.__bitrate
-        }
-        
-        # Add parent info based on parent type
+        # Create done status report
+        song = self.__song_metadata.get("music", "")
+        artist = self.__song_metadata.get("artist", "")
+        parent_info = None
+        total_tracks_val = None
+        current_track_val = None
+        summary_data = None
+
         if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
             playlist_data = self.__preferences.json_data
-            playlist_name = playlist_data.get('name', 'unknown')
-            total_tracks = playlist_data.get('tracks', {}).get('total', 'unknown')
-            current_track = getattr(self.__preferences, 'track_number', 0)
-            
-            progress_data.update({
-                "current_track": current_track,
-                "total_tracks": total_tracks,
-                "parent": {
-                    "type": "playlist",
-                    "name": playlist_name,
-                    "owner": playlist_data.get('owner', {}).get('display_name', 'unknown'),
-                    "total_tracks": total_tracks,
-                    "url": f"https://open.spotify.com/playlist/{playlist_data.get('id', '')}"
-                }
-            })
+            total_tracks_val = playlist_data.get('tracks', {}).get('total', 'unknown')
+            current_track_val = getattr(self.__preferences, 'track_number', 0)
+            parent_info = {
+                "type": "playlist",
+                "name": playlist_data.get('name', 'unknown'),
+                "owner": playlist_data.get('owner', {}).get('display_name', 'unknown'),
+                "total_tracks": total_tracks_val,
+                "url": f"https://open.spotify.com/playlist/{playlist_data.get('id', '')}"
+            }
         elif self.__parent == "album":
-            album_name = self.__song_metadata.get('album', '')
-            album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('ar_album', ''))
-            total_tracks = self.__song_metadata.get('nb_tracks', 0)
-            current_track = getattr(self.__preferences, 'track_number', 0)
-            
-            progress_data.update({
-                "current_track": current_track,
-                "total_tracks": total_tracks,
-                "parent": {
-                    "type": "album",
-                    "title": album_name,
-                    "artist": album_artist,
-                    "total_tracks": total_tracks,
-                    "url": f"https://open.spotify.com/album/{self.__song_metadata.get('album_id', '')}"
-                }
-            })
-            
-        Download_JOB.report_progress(progress_data)
+            total_tracks_val = self.__song_metadata.get('nb_tracks', 0)
+            current_track_val = getattr(self.__preferences, 'track_number', 0)
+            parent_info = {
+                "type": "album",
+                "title": self.__song_metadata.get('album', ''),
+                "artist": self.__song_metadata.get('album_artist', self.__song_metadata.get('ar_album', '')),
+                "total_tracks": total_tracks_val,
+                "url": f"https://open.spotify.com/album/{self.__song_metadata.get('album_id', '')}"
+            }
+
+        if self.__parent is None:
+            summary_data = {
+                "successful_tracks": [f"{song} - {artist}"],
+                "skipped_tracks": [],
+                "failed_tracks": [],
+                "total_successful": 1,
+                "total_skipped": 0,
+                "total_failed": 0,
+            }
+
+        report_progress(
+            reporter=Download_JOB.progress_reporter,
+            report_type="track",
+            status="done",
+            song=song,
+            artist=artist,
+            url=self.__link,
+            convert_to=self.__convert_to,
+            bitrate=self.__bitrate,
+            parent=parent_info,
+            current_track=current_track_val,
+            total_tracks=total_tracks_val,
+            summary=summary_data,
+        )
 
         if hasattr(self, '_EASY_DW__c_track') and self.__c_track and self.__c_track.success:
             # Unregister the final successful file path after all operations are done.
-            # self.__c_track.song_path would have been updated by __convert_audio__ if conversion occurred.
             unregister_active_download(self.__c_track.song_path)
 
         return self.__c_track
@@ -806,21 +802,22 @@ class EASY_DW:
                 GLOBAL_RETRY_COUNT += 1
                 retries += 1
                 # Log retry attempt with structured data
-                print(json.dumps({
-                    "status": "retrying",
-                    "retry_count": retries,
-                    "seconds_left": retry_delay,
-                    "song": self.__song_metadata.get('music', 'Unknown Episode'),
-                    "artist": self.__song_metadata.get('artist', 'Unknown Show'),
-                    "album": self.__song_metadata.get('album', 'N/A'), # Episodes don't typically have albums
-                    "error": str(e),
-                    "convert_to": self.__convert_to,
-                    "bitrate": self.__bitrate 
-                }))
+                report_progress(
+                    reporter=Download_JOB.progress_reporter,
+                    report_type="episode",
+                    status="retrying",
+                    retry_count=retries,
+                    seconds_left=retry_delay,
+                    song=self.__song_metadata.get('music', 'Unknown Episode'),
+                    artist=self.__song_metadata.get('artist', 'Unknown Show'),
+                    error=str(e),
+                    url=self.__link,
+                    convert_to=self.__convert_to,
+                    bitrate=self.__bitrate
+                )
                 if retries >= max_retries or GLOBAL_RETRY_COUNT >= GLOBAL_MAX_RETRIES:
                     if os.path.exists(self.__song_path):
                         os.remove(self.__song_path) # Clean up partial file
-                        unregister_active_download(self.__song_path) # Unregister it
                     track_name = self.__song_metadata.get('music', 'Unknown Episode')
                     artist_name = self.__song_metadata.get('artist', 'Unknown Show')
                     final_error_msg = f"Maximum retry limit reached for '{track_name}' by '{artist_name}' (local: {max_retries}, global: {GLOBAL_MAX_RETRIES}). Last error: {str(e)}"
@@ -941,23 +938,24 @@ class EASY_DW:
             # Conversion failed. __convert_audio or underlying convert_audio should have cleaned up its own temps.
             # The original downloaded file (if __convert_audio started from it) might still exist or be the self.__song_path.
             # Or self.__song_path might be a partially converted file if convert_audio failed mid-way and didn't cleanup perfectly.
-            logger.error(json.dumps({
-                "status": "error",
-                "action": "convert_audio",
-                "song": self.__song_metadata.get('music', 'Unknown Episode'),
-                "artist": self.__song_metadata.get('artist', 'Unknown Show'),
-                "album": self.__song_metadata.get('album', 'N/A'),
-                "error": str(conv_e),
-                "convert_to": self.__convert_to,
-                "bitrate": self.__bitrate
-            }))
+            episode_title = self.__song_metadata.get('music', 'Unknown Episode')
+            error_message = f"Audio conversion for episode '{episode_title}' failed. Original error: {str(conv_e)}"
+            report_progress(
+                reporter=Download_JOB.progress_reporter,
+                report_type="episode",
+                status="error",
+                song=episode_title,
+                artist=self.__song_metadata.get('artist', 'Unknown Show'),
+                error=error_message,
+                url=self.__link,
+                convert_to=self.__convert_to,
+                bitrate=self.__bitrate
+            )
             # Attempt to remove self.__song_path, which is the latest known path for this episode
             if os.path.exists(self.__song_path):
                 os.remove(self.__song_path)
                 unregister_active_download(self.__song_path) # Unregister it as it failed/was removed
             
-            episode_title = self.__song_metadata.get('music', 'Unknown Episode')
-            error_message = f"Audio conversion for episode '{episode_title}' failed. Original error: {str(conv_e)}"
             logger.error(error_message)
             if hasattr(self, '_EASY_DW__c_episode') and self.__c_episode:
                 self.__c_episode.success = False
@@ -1045,14 +1043,15 @@ class DW_ALBUM:
         total_tracks = self.__song_metadata.get('nb_tracks', 0)
         album_id = self.__ids
         
-        Download_JOB.report_progress({
-            "type": "album",
-            "artist": album_artist,
-            "status": "initializing",
-            "total_tracks": total_tracks,
-            "title": album_name,
-            "url": f"https://open.spotify.com/album/{album_id}"
-        })
+        report_progress(
+            reporter=Download_JOB.progress_reporter,
+            report_type="album",
+            artist=album_artist,
+            status="initializing",
+            total_tracks=total_tracks,
+            title=album_name,
+            url=f"https://open.spotify.com/album/{album_id}",
+        )
         
         pic_url = self.__song_metadata['image'] # This is URL for spotify
         image_bytes = request(pic_url).content
@@ -1095,7 +1094,7 @@ class DW_ALBUM:
                         album_name_for_log = c_song_metadata.get('album', self.__song_metadata.get('album', 'Unknown Album'))
                         logger.warning(
                             f"In album '{album_name_for_log}', metadata list for key '{key}' is too short. "
-                            f"Expected at least {a + 1} elements for track {a + 1}/{total_tracks} "
+                            f"Expected at least {a + 1} elements for track {a + 1} "
                             f"(list has {len(metadata_value_for_key)}). Assigning None to '{key}' for this track."
                         )
                         c_song_metadata[key] = None
@@ -1158,14 +1157,44 @@ class DW_ALBUM:
         total_tracks = self.__song_metadata.get('nb_tracks', 0)
         album_id = self.__ids
         
-        Download_JOB.report_progress({
-            "type": "album",
-            "artist": album_artist,
-            "status": "done",
-            "total_tracks": total_tracks,
-            "title": album_name,
-            "url": f"https://open.spotify.com/album/{album_id}"
-        })
+        successful_tracks = []
+        failed_tracks = []
+        skipped_tracks = []
+        for track in tracks:
+            track_info = {
+                "name": track.tags.get('music', 'Unknown Track'),
+                "artist": track.tags.get('artist', 'Unknown Artist')
+            }
+            if getattr(track, 'was_skipped', False):
+                skipped_tracks.append(track_info)
+            elif track.success:
+                successful_tracks.append(track_info)
+            else:
+                track_info["reason"] = getattr(track, 'error_message', 'Unknown reason')
+                failed_tracks.append(track_info)
+
+        summary = {
+            "successful_tracks": [f"{t['name']} - {t['artist']}" for t in successful_tracks],
+            "skipped_tracks": [f"{t['name']} - {t['artist']}" for t in skipped_tracks],
+            "failed_tracks": [{
+                "track": f"{t['name']} - {t['artist']}",
+                "reason": t['reason']
+            } for t in failed_tracks],
+            "total_successful": len(successful_tracks),
+            "total_skipped": len(skipped_tracks),
+            "total_failed": len(failed_tracks)
+        }
+        
+        report_progress(
+            reporter=Download_JOB.progress_reporter,
+            report_type="album",
+            artist=album_artist,
+            status="done",
+            total_tracks=total_tracks,
+            title=album_name,
+            url=f"https://open.spotify.com/album/{album_id}",
+            summary=summary,
+        )
         
         return album
 
@@ -1188,14 +1217,15 @@ class DW_PLAYLIST:
         playlist_id = self.__ids
 
         # Report playlist initializing status
-        Download_JOB.report_progress({
-            "type": "playlist",
-            "owner": playlist_owner,
-            "status": "initializing",
-            "total_tracks": total_tracks,
-            "name": playlist_name,
-            "url": f"https://open.spotify.com/playlist/{playlist_id}"
-        })
+        report_progress(
+            reporter=Download_JOB.progress_reporter,
+            report_type="playlist",
+            owner=playlist_owner,
+            status="initializing",
+            total_tracks=total_tracks,
+            name=playlist_name,
+            url=f"https://open.spotify.com/playlist/{playlist_id}",
+        )
         
         # --- Prepare the m3u playlist file ---
         playlist_m3u_dir = os.path.join(self.__output_dir, "playlists")
@@ -1344,14 +1374,43 @@ class DW_PLAYLIST:
         total_tracks = self.__json_data.get('tracks', {}).get('total', 0)
         playlist_id = self.__ids
         
-        Download_JOB.report_progress({
-            "type": "playlist",
-            "owner": playlist_owner,
-            "status": "done",
-            "total_tracks": total_tracks,
-            "name": playlist_name,
-            "url": f"https://open.spotify.com/playlist/{playlist_id}"
-        })
+        successful_tracks = []
+        failed_tracks = []
+        skipped_tracks = []
+        for track in tracks:
+            track_info = {
+                "name": track.tags.get('music') or track.tags.get('name', 'Unknown Track'),
+                "artist": track.tags.get('artist', 'Unknown Artist')
+            }
+            if getattr(track, 'was_skipped', False):
+                skipped_tracks.append(track_info)
+            elif track.success:
+                successful_tracks.append(track_info)
+            else:
+                track_info["reason"] = getattr(track, 'error_message', 'Unknown reason')
+                failed_tracks.append(track_info)
+
+        summary = {
+            "successful_tracks": [f"{t['name']} - {t['artist']}" for t in successful_tracks],
+            "skipped_tracks": [f"{t['name']} - {t['artist']}" for t in skipped_tracks],
+            "failed_tracks": [{
+                "track": f"{t['name']} - {t['artist']}",
+                "reason": t['reason']
+            } for t in failed_tracks],
+            "total_successful": len(successful_tracks),
+            "total_skipped": len(skipped_tracks),
+            "total_failed": len(failed_tracks)
+        }
+        report_progress(
+            reporter=Download_JOB.progress_reporter,
+            report_type="playlist",
+            owner=playlist_owner,
+            status="done",
+            total_tracks=total_tracks,
+            name=playlist_name,
+            url=f"https://open.spotify.com/playlist/{playlist_id}",
+            summary=summary,
+        )
         
         return playlist
 
@@ -1363,36 +1422,27 @@ class DW_EPISODE:
         self.__preferences = preferences
 
     def dw(self) -> Episode:
-        # Using standardized episode progress format
-        progress_data = {
-            "type": "episode",
-            "song": self.__preferences.song_metadata.get('name', 'Unknown Episode'),
-            "artist": self.__preferences.song_metadata.get('show', 'Unknown Show'),
-            "status": "initializing"
-        }
-        
-        # Set URL if available
         episode_id = self.__preferences.ids
-        if episode_id:
-            progress_data["url"] = f"https://open.spotify.com/episode/{episode_id}"
-            
-        Download_JOB.report_progress(progress_data)
+        url = f"https://open.spotify.com/episode/{episode_id}" if episode_id else None
+        
+        report_progress(
+            reporter=Download_JOB.progress_reporter,
+            report_type="episode",
+            song=self.__preferences.song_metadata.get('name', 'Unknown Episode'),
+            artist=self.__preferences.song_metadata.get('show', 'Unknown Show'),
+            status="initializing",
+            url=url,
+        )
         
         episode = EASY_DW(self.__preferences).download_eps()
         
-        # Using standardized episode progress format
-        progress_data = {
-            "type": "episode",
-            "song": self.__preferences.song_metadata.get('name', 'Unknown Episode'),
-            "artist": self.__preferences.song_metadata.get('show', 'Unknown Show'),
-            "status": "done"
-        }
-        
-        # Set URL if available
-        episode_id = self.__preferences.ids
-        if episode_id:
-            progress_data["url"] = f"https://open.spotify.com/episode/{episode_id}"
-            
-        Download_JOB.report_progress(progress_data)
+        report_progress(
+            reporter=Download_JOB.progress_reporter,
+            report_type="episode",
+            song=self.__preferences.song_metadata.get('name', 'Unknown Episode'),
+            artist=self.__preferences.song_metadata.get('show', 'Unknown Show'),
+            status="done",
+            url=url,
+        )
         
         return episode

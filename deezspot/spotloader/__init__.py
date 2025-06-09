@@ -36,7 +36,7 @@ from deezspot.libutils.others_settings import (
     stock_real_time_dl,
     stock_market
 )
-from deezspot.libutils.logging_utils import logger, ProgressReporter
+from deezspot.libutils.logging_utils import logger, ProgressReporter, report_progress
 
 class SpoLogin:
     def __init__(
@@ -60,10 +60,6 @@ class SpoLogin:
         self.progress_reporter = ProgressReporter(callback=progress_callback, silent=silent)
         
         self.__initialize_session()
-
-    def report_progress(self, progress_data):
-        """Report progress using the configured reporter."""
-        self.progress_reporter.report(progress_data)
 
     def __initialize_session(self) -> None:
         try:
@@ -143,10 +139,62 @@ class SpoLogin:
             return track
         except MarketAvailabilityError as e:
             logger.error(f"Track download failed due to market availability: {str(e)}")
+            if song_metadata:
+                track_info = {
+                    "name": song_metadata.get("music", "Unknown Track"),
+                    "artist": song_metadata.get("artist", "Unknown Artist"),
+                }
+                summary = {
+                    "successful_tracks": [],
+                    "skipped_tracks": [],
+                    "failed_tracks": [{
+                        "track": f"{track_info['name']} - {track_info['artist']}",
+                        "reason": str(e)
+                    }],
+                    "total_successful": 0,
+                    "total_skipped": 0,
+                    "total_failed": 1
+                }
+                report_progress(
+                    reporter="ProgressReporter",
+                    report_type="track",
+                    song=track_info['name'],
+                    artist=track_info['artist'],
+                    status="failed",
+                    url=link_track,
+                    error=str(e),
+                    summary=summary
+                )
             raise
         except Exception as e:
             logger.error(f"Failed to download track: {str(e)}")
             traceback.print_exc()
+            if song_metadata:
+                track_info = {
+                    "name": song_metadata.get("music", "Unknown Track"),
+                    "artist": song_metadata.get("artist", "Unknown Artist"),
+                }
+                summary = {
+                    "successful_tracks": [],
+                    "skipped_tracks": [],
+                    "failed_tracks": [{
+                        "track": f"{track_info['name']} - {track_info['artist']}",
+                        "reason": str(e)
+                    }],
+                    "total_successful": 0,
+                    "total_skipped": 0,
+                    "total_failed": 1
+                }
+                report_progress(
+                    reporter="ProgressReporter",
+                    report_type="track",
+                    song=track_info['name'],
+                    artist=track_info['artist'],
+                    status="failed",
+                    url=link_track,
+                    error=str(e),
+                    summary=summary
+                )
             raise e
 
     def download_album(

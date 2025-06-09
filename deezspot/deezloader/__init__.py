@@ -43,7 +43,7 @@ from deezspot.libutils.others_settings import (
     stock_save_cover,
     stock_market
 )
-from deezspot.libutils.logging_utils import ProgressReporter, logger
+from deezspot.libutils.logging_utils import ProgressReporter, logger, report_progress
 import requests
 
 API()
@@ -89,10 +89,6 @@ class DeeLogin:
         # Set the progress reporter for Download_JOB
         Download_JOB.set_progress_reporter(self.progress_reporter)
 
-    def report_progress(self, progress_data):
-        """Report progress using the configured reporter."""
-        self.progress_reporter.report(progress_data)
-
     def download_trackdee(
         self, link_track,
         output_dir=stock_output,
@@ -125,6 +121,20 @@ class DeeLogin:
             song_metadata = API.tracking(ids, market=market)
         except MarketAvailabilityError as e:
             logger.error(f"Track {ids} is not available in market(s) '{market_str}'. Error: {e.message}")
+            summary = {
+                "successful_tracks": [], "skipped_tracks": [], "total_successful": 0, "total_skipped": 0, "total_failed": 1,
+                "failed_tracks": [{"track": f"Track ID {ids}", "reason": str(e)}]
+            }
+            report_progress(
+                reporter=self.progress_reporter,
+                report_type="track",
+                status="error",
+                song="Unknown Track",
+                artist="Unknown Artist",
+                url=link_track,
+                error=str(e),
+                summary=summary
+            )
             raise TrackNotFound(url=link_track, message=e.message) from e
         except NoDataApi:
             infos = self.__gw_api.get_song_data(ids)
@@ -161,9 +171,28 @@ class DeeLogin:
         preferences.save_cover = save_cover
         preferences.market = market
 
-        track = DW_TRACK(preferences).dw()
-
-        return track
+        try:
+            track = DW_TRACK(preferences).dw()
+            return track
+        except Exception as e:
+            logger.error(f"Failed to download track: {str(e)}")
+            if song_metadata:
+                track_info = {"name": song_metadata.get("music", "Unknown Track"), "artist": song_metadata.get("artist", "Unknown Artist")}
+                summary = {
+                    "successful_tracks": [], "skipped_tracks": [], "total_successful": 0, "total_skipped": 0, "total_failed": 1,
+                    "failed_tracks": [{"track": f"{track_info['name']} - {track_info['artist']}", "reason": str(e)}]
+                }
+                report_progress(
+                    reporter=self.progress_reporter,
+                    report_type="track",
+                    status="error",
+                    song=track_info['name'],
+                    artist=track_info['artist'],
+                    url=link_track,
+                    error=str(e),
+                    summary=summary
+                )
+            raise e
 
     def download_albumdee(
         self, link_album,
@@ -695,29 +724,26 @@ class DeeLogin:
         # Use stored credentials for API calls
         playlist_json = Spo.get_playlist(ids)
         playlist_name = playlist_json['name']
+        playlist_owner = playlist_json.get('owner', {}).get('display_name', 'Unknown Owner')
         total_tracks = playlist_json['tracks']['total']
         playlist_tracks = playlist_json['tracks']['items']
         playlist = Playlist()
         tracks = playlist.tracks
 
         # Initializing status - replaced print with report_progress
-        self.report_progress({
-            "status": "initializing",
-            "type": "playlist",
-            "name": playlist_name,
-            "total_tracks": total_tracks
-        })
+        report_progress(
+            reporter=self.progress_reporter,
+            report_type="playlist",
+            status="initializing",
+            name=playlist_name,
+            owner=playlist_owner,
+            total_tracks=total_tracks,
+            url=link_playlist
+        )
 
         for index, item in enumerate(playlist_tracks, 1):
             is_track = item.get('track')
             if not is_track:
-                # Progress status for an invalid track item
-                self.report_progress({
-                    "status": "progress",
-                    "type": "playlist",
-                    "track": "Unknown Track",
-                    "current_track": f"{index}/{total_tracks}"
-                })
                 continue
 
             track_info = is_track
@@ -727,23 +753,8 @@ class DeeLogin:
 
             external_urls = track_info.get('external_urls', {})
             if not external_urls:
-                # Progress status for unavailable track
-                self.report_progress({
-                    "status": "progress",
-                    "type": "playlist",
-                    "track": track_name,
-                    "current_track": f"{index}/{total_tracks}"
-                })
                 logger.warning(f"The track \"{track_name}\" is not available on Spotify :(")
                 continue
-
-            # Progress status before download attempt
-            self.report_progress({
-                "status": "progress",
-                "type": "playlist",
-                "track": track_name,
-                "current_track": f"{index}/{total_tracks}"
-            })
 
             link_track = external_urls['spotify']
 
@@ -773,12 +784,49 @@ class DeeLogin:
                 tracks.append(f"{track_name} - {artist_name}")
 
         # Done status
-        self.report_progress({
-            "status": "done",
-            "type": "playlist",
-            "name": playlist_name,
-            "total_tracks": total_tracks
-        })
+        successful_tracks_list = []
+        failed_tracks_list = []
+        skipped_tracks_list = []
+        for track in tracks:
+            if isinstance(track, Track):
+                track_info = {
+                    "name": track.tags.get('music', 'Unknown Track'),
+                    "artist": track.tags.get('artist', 'Unknown Artist')
+                }
+                if getattr(track, 'was_skipped', False):
+                    skipped_tracks_list.append(f"{track_info['name']} - {track_info['artist']}")
+                elif track.success:
+                    successful_tracks_list.append(f"{track_info['name']} - {track_info['artist']}")
+                else:
+                    failed_tracks_list.append({
+                        "track": f"{track_info['name']} - {track_info['artist']}",
+                        "reason": getattr(track, 'error_message', 'Unknown reason')
+                    })
+            elif isinstance(track, str): # It can be a string for failed tracks
+                failed_tracks_list.append({
+                    "track": track,
+                    "reason": "Failed to download or convert."
+                })
+
+        summary = {
+            "successful_tracks": successful_tracks_list,
+            "skipped_tracks": skipped_tracks_list,
+            "failed_tracks": failed_tracks_list,
+            "total_successful": len(successful_tracks_list),
+            "total_skipped": len(skipped_tracks_list),
+            "total_failed": len(failed_tracks_list),
+        }
+
+        report_progress(
+            reporter=self.progress_reporter,
+            report_type="playlist",
+            status="done",
+            name=playlist_name,
+            owner=playlist_owner,
+            total_tracks=total_tracks,
+            url=link_playlist,
+            summary=summary
+        )
 
         # === New m3u File Creation Section ===
         # Create a subfolder "playlists" inside the output directory
@@ -974,7 +1022,7 @@ class DeeLogin:
         smart.source = source
         
         # Add progress reporting for the smart downloader
-        self.report_progress({
+        self.progress_reporter.report({
             "status": "initializing",
             "type": "smart_download",
             "link": link,
@@ -1071,7 +1119,7 @@ class DeeLogin:
             smart.playlist = playlist
             
         # Report completion
-        self.report_progress({
+        self.progress_reporter.report({
             "status": "done",
             "type": "smart_download",
             "source": source,

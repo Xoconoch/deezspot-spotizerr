@@ -42,7 +42,7 @@ from mutagen.mp3 import MP3
 from mutagen.id3 import ID3
 from mutagen.mp4 import MP4
 from mutagen import File
-from deezspot.libutils.logging_utils import logger, ProgressReporter
+from deezspot.libutils.logging_utils import logger, ProgressReporter, report_progress
 from deezspot.libutils.skip_detection import check_track_exists
 from deezspot.libutils.cleanup_utils import register_active_download, unregister_active_download
 from deezspot.libutils.audio_converter import AUDIO_FORMATS # Added for parse_format_string
@@ -54,15 +54,6 @@ class Download_JOB:
     def set_progress_reporter(cls, reporter):
         cls.progress_reporter = reporter
         
-    @classmethod
-    def report_progress(cls, progress_data):
-        """Report progress if a reporter is configured."""
-        if cls.progress_reporter:
-            cls.progress_reporter.report(progress_data)
-        else:
-            # Fallback to logger if no reporter is configured
-            logger.info(json.dumps(progress_data))
-
     @classmethod
     def __get_url(cls, c_track: Track, quality_download: str) -> dict:
         if c_track.get('__TYPE__') == 'episode':
@@ -324,17 +315,11 @@ class EASY_DW:
             self.__c_track.success = True
             self.__c_track.was_skipped = True
 
-            progress_data = {
-                "type": "track",
-                "song": current_title,
-                "artist": self.__song_metadata['artist'],
-                "status": "skipped",
-                "url": self.__link,
-                "reason": f"Track already exists in desired format at {existing_file_path}",
-                "convert_to": self.__convert_to,
-                "bitrate": self.__bitrate
-            }
-            
+            parent = None
+            current_track = None
+            total_tracks = None
+            summary = None
+
             # Add parent info based on parent type
             if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
                 playlist_data = self.__preferences.json_data
@@ -343,17 +328,13 @@ class EASY_DW:
                 current_track = getattr(self.__preferences, 'track_number', 0)
                 
                 # Format for playlist-parented tracks exactly as required
-                progress_data.update({
-                    "current_track": current_track,
+                parent = {
+                    "type": "playlist",
+                    "name": playlist_name,
+                    "owner": playlist_data.get('creator', {}).get('name', 'unknown'),
                     "total_tracks": total_tracks,
-                    "parent": {
-                        "type": "playlist",
-                        "name": playlist_name,
-                        "owner": playlist_data.get('creator', {}).get('name', 'unknown'),
-                        "total_tracks": total_tracks,
-                        "url": f"https://deezer.com/playlist/{self.__preferences.json_data.get('id', '')}"
-                    }
-                })
+                    "url": f"https://deezer.com/playlist/{self.__preferences.json_data.get('id', '')}"
+                }
             elif self.__parent == "album":
                 album_name = self.__song_metadata.get('album', '')
                 album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('album_artist', ''))
@@ -361,19 +342,43 @@ class EASY_DW:
                 current_track = getattr(self.__preferences, 'track_number', 0)
                 
                 # Format for album-parented tracks exactly as required
-                progress_data.update({
-                    "current_track": current_track,
+                parent = {
+                    "type": "album",
+                    "title": album_name,
+                    "artist": album_artist,
                     "total_tracks": total_tracks,
-                    "parent": {
-                        "type": "album",
-                        "title": album_name,
-                        "artist": album_artist,
-                        "total_tracks": total_tracks,
-                        "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"
-                    }
-                })
+                    "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"
+                }
         
-            Download_JOB.report_progress(progress_data)
+            if self.__parent is None:
+                track_info = {
+                    "name": current_title,
+                    "artist": current_artist
+                }
+                summary = {
+                    "successful_tracks": [],
+                    "skipped_tracks": [f"{track_info['name']} - {track_info['artist']}"],
+                    "failed_tracks": [],
+                    "total_successful": 0,
+                    "total_skipped": 1,
+                    "total_failed": 0,
+                }
+
+            report_progress(
+                reporter=Download_JOB.progress_reporter,
+                report_type="track",
+                song=current_title,
+                artist=self.__song_metadata['artist'],
+                status="skipped",
+                url=self.__link,
+                reason=f"Track already exists in desired format at {existing_file_path}",
+                convert_to=self.__convert_to,
+                bitrate=self.__bitrate,
+                parent=parent,
+                current_track=current_track,
+                total_tracks=total_tracks,
+                summary=summary
+            )
             # self.__c_track might not be fully initialized here if __write_track() hasn't been called
             # Create a minimal track object for skipped scenario
             skipped_item = Track(
@@ -407,45 +412,49 @@ class EASY_DW:
                 # Create done status report using the new required format (only if download_try didn't fail)
                 # This part should only execute if download_try itself was successful (i.e., no exception)
                 if self.__c_track.success : # Check if download_try marked it as successful
-                    progress_data = {
-                        "type": "track",
-                        "song": self.__song_metadata['music'],
-                        "artist": self.__song_metadata['artist'],
-                        "status": "done",
-                        "convert_to": self.__convert_to
-                    }
+                    parent = None
+                    current_track = None
+                    total_tracks = None
+
                     spotify_url = getattr(self.__preferences, 'spotify_url', None)
-                    progress_data["url"] = spotify_url if spotify_url else self.__link
+                    url = spotify_url if spotify_url else self.__link
+
                     if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
                         playlist_data = self.__preferences.json_data
-                        # ... (rest of playlist parent data) ...
-                        progress_data.update({
-                            "current_track": getattr(self.__preferences, 'track_number', 0),
-                            "total_tracks": getattr(self.__preferences, 'total_tracks', 0),
-                            "parent": {
-                                "type": "playlist",
-                                "name": playlist_data.get('title', 'unknown'),
-                                "owner": playlist_data.get('creator', {}).get('name', 'unknown')
-                            }
-                        })
-                elif self.__parent == "album":
-                    album_name = self.__song_metadata.get('album', '')
-                    album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('album_artist', ''))
-                    total_tracks = getattr(self.__preferences, 'total_tracks', 0)
-                    current_track = getattr(self.__preferences, 'track_number', 0)
-                    
-                    progress_data.update({
-                        "current_track": current_track,
-                        "total_tracks": total_tracks,
-                        "parent": {
+                        total_tracks = getattr(self.__preferences, 'total_tracks', 0)
+                        current_track = getattr(self.__preferences, 'track_number', 0)
+                        parent = {
+                            "type": "playlist",
+                            "name": playlist_data.get('title', 'unknown'),
+                            "owner": playlist_data.get('creator', {}).get('name', 'unknown'),
+                            "total_tracks": total_tracks,
+                            "url": f"https://deezer.com/playlist/{playlist_data.get('id', '')}"
+                        }
+                    elif self.__parent == "album":
+                        album_name = self.__song_metadata.get('album', '')
+                        album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('album_artist', ''))
+                        total_tracks = getattr(self.__preferences, 'total_tracks', 0)
+                        current_track = getattr(self.__preferences, 'track_number', 0)
+                        parent = {
                             "type": "album",
                             "title": album_name,
                             "artist": album_artist,
                             "total_tracks": total_tracks,
                             "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"
                         }
-                    })
-                    Download_JOB.report_progress(progress_data)
+
+                    report_progress(
+                        reporter=Download_JOB.progress_reporter,
+                        report_type="track",
+                        song=self.__song_metadata['music'],
+                        artist=self.__song_metadata['artist'],
+                        status="done",
+                        url=url,
+                        parent=parent,
+                        current_track=current_track,
+                        total_tracks=total_tracks,
+                        convert_to=self.__convert_to
+                    )
 
         except Exception as e: # Covers failures within download_try or download_episode_try
             item_type = "Episode" if self.__infos_dw.get('__TYPE__') == 'episode' else "Track"
@@ -572,47 +581,48 @@ class EASY_DW:
                 self.__write_track()
                 
                 # Send immediate progress status for the track
-                progress_data = {
-                    "type": "track",
-                    "song": self.__song_metadata.get("music", ""),
-                    "artist": self.__song_metadata.get("artist", ""),
-                    "status": "progress"
-                }
+                parent = None
+                current_track = None
+                total_tracks = None
                 spotify_url = getattr(self.__preferences, 'spotify_url', None)
-                progress_data["url"] = spotify_url if spotify_url else self.__link
+                url = spotify_url if spotify_url else self.__link
+                
                 if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
                     playlist_data = self.__preferences.json_data
                     playlist_name = playlist_data.get('title', 'unknown')
                     total_tracks = getattr(self.__preferences, 'total_tracks', 0)
                     current_track = getattr(self.__preferences, 'track_number', 0)
-                    progress_data.update({
-                        "current_track": current_track,
+                    parent = {
+                        "type": "playlist",
+                        "name": playlist_name,
+                        "owner": playlist_data.get('creator', {}).get('name', 'unknown'),
                         "total_tracks": total_tracks,
-                        "parent": {
-                            "type": "playlist",
-                            "name": playlist_name,
-                            "owner": playlist_data.get('creator', {}).get('name', 'unknown'),
-                            "total_tracks": total_tracks,
-                            "url": f"https://deezer.com/playlist/{self.__preferences.json_data.get('id', '')}"
-                        }
-                    })
+                        "url": f"https://deezer.com/playlist/{self.__preferences.json_data.get('id', '')}"
+                    }
                 elif self.__parent == "album":
                     album_name = self.__song_metadata.get('album', '')
                     album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('album_artist', ''))
                     total_tracks = getattr(self.__preferences, 'total_tracks', 0)
                     current_track = getattr(self.__preferences, 'track_number', 0)
-                    progress_data.update({
-                        "current_track": current_track,
+                    parent = {
+                        "type": "album",
+                        "title": album_name,
+                        "artist": album_artist,
                         "total_tracks": total_tracks,
-                        "parent": {
-                            "type": "album",
-                            "title": album_name,
-                            "artist": album_artist,
-                            "total_tracks": total_tracks,
-                            "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"
-                        }
-                    })
-                Download_JOB.report_progress(progress_data)
+                        "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"
+                    }
+
+                report_progress(
+                    reporter=Download_JOB.progress_reporter,
+                    report_type="track",
+                    song=self.__song_metadata.get("music", ""),
+                    artist=self.__song_metadata.get("artist", ""),
+                    status="progress",
+                    url=url,
+                    parent=parent,
+                    current_track=current_track,
+                    total_tracks=total_tracks,
+                )
                 
                 # Start of processing block (decryption, tagging, cover, conversion)
                 register_active_download(self.__song_path)
@@ -704,21 +714,46 @@ class EASY_DW:
                 elif "404" in error_msg or "Not Found" in error_msg: error_msg = "Track not found - It might have been removed"
                 
                 # (Error reporting code as it exists)
-                error_progress_data = {
-                    "type": "track", "status": "error",
-                    "song": self.__song_metadata.get('music', ''), "artist": self.__song_metadata.get('artist', ''),
-                    "error": error_msg, "url": getattr(self.__preferences, 'spotify_url', None) or self.__link,
-                    "convert_to": self.__convert_to
-                }
+                parent = None
+                current_track = None
+                total_tracks = None
+
                 if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
-                    playlist_data = self.__preferences.json_data; playlist_name = playlist_data.get('title', 'unknown')
-                    total_tracks = getattr(self.__preferences, 'total_tracks', 0); current_track = getattr(self.__preferences, 'track_number', 0)
-                    error_progress_data.update({"current_track": current_track, "total_tracks": total_tracks, "parent": {"type": "playlist", "name": playlist_name, "owner": playlist_data.get('creator', {}).get('name', 'unknown'), "total_tracks": total_tracks, "url": f"https://deezer.com/playlist/{playlist_data.get('id', '')}"}})
+                    playlist_data = self.__preferences.json_data
+                    playlist_name = playlist_data.get('title', 'unknown')
+                    total_tracks = getattr(self.__preferences, 'total_tracks', 0)
+                    current_track = getattr(self.__preferences, 'track_number', 0)
+                    parent = {
+                        "type": "playlist", "name": playlist_name, 
+                        "owner": playlist_data.get('creator', {}).get('name', 'unknown'), 
+                        "total_tracks": total_tracks, 
+                        "url": f"https://deezer.com/playlist/{playlist_data.get('id', '')}"
+                    }
                 elif self.__parent == "album":
-                    album_name = self.__song_metadata.get('album', ''); album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('album_artist', ''))
-                    total_tracks = getattr(self.__preferences, 'total_tracks', 0); current_track = getattr(self.__preferences, 'track_number', 0)
-                    error_progress_data.update({"current_track": current_track, "total_tracks": total_tracks, "parent": {"type": "album", "title": album_name, "artist": album_artist, "total_tracks": total_tracks, "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"}})
-                Download_JOB.report_progress(error_progress_data)
+                    album_name = self.__song_metadata.get('album', '')
+                    album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('album_artist', ''))
+                    total_tracks = getattr(self.__preferences, 'total_tracks', 0)
+                    current_track = getattr(self.__preferences, 'track_number', 0)
+                    parent = {
+                        "type": "album", "title": album_name, 
+                        "artist": album_artist, 
+                        "total_tracks": total_tracks, 
+                        "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"
+                    }
+
+                report_progress(
+                    reporter=Download_JOB.progress_reporter,
+                    report_type="track",
+                    status="error",
+                    song=self.__song_metadata.get('music', ''),
+                    artist=self.__song_metadata.get('artist', ''),
+                    error=error_msg,
+                    url=getattr(self.__preferences, 'spotify_url', None) or self.__link,
+                    convert_to=self.__convert_to,
+                    parent=parent,
+                    current_track=current_track,
+                    total_tracks=total_tracks
+                )
                 logger.error(f"Failed to process track: {error_msg}")
                 
                 self.__c_track.success = False
@@ -781,7 +816,7 @@ class EASY_DW:
                 spotify_url = getattr(self.__preferences, 'spotify_url', None)
                 progress_data["url"] = spotify_url if spotify_url else self.__link
                 
-                Download_JOB.report_progress(progress_data)
+                Download_JOB.progress_reporter.report(progress_data)
                 
                 self.__c_track.success = True
                 self.__write_episode()
@@ -933,6 +968,29 @@ class DW_TRACK:
             logger.error(f"{error_msg} (Link: {current_link})")
             raise TrackNotFound(message=error_msg, url=current_link)
 
+        if track.success and not getattr(track, 'was_skipped', False):
+            track_info = {
+                "name": track.tags.get('music', 'Unknown Track'),
+                "artist": track.tags.get('artist', 'Unknown Artist')
+            }
+            summary = {
+                "successful_tracks": [f"{track_info['name']} - {track_info['artist']}"],
+                "skipped_tracks": [],
+                "failed_tracks": [],
+                "total_successful": 1,
+                "total_skipped": 0,
+                "total_failed": 0,
+            }
+            report_progress(
+                reporter=Download_JOB.progress_reporter,
+                report_type="track",
+                song=track_info['name'],
+                artist=track_info['artist'],
+                status="done",
+                url=track.link,
+                summary=summary
+            )
+
         return track
 
 class DW_ALBUM:
@@ -985,14 +1043,15 @@ class DW_ALBUM:
         total_tracks_for_report = self.__song_metadata.get('nb_tracks', 0)
         album_link_for_report = self.__preferences.link # Get album link from preferences
         
-        Download_JOB.report_progress({
-            "type": "album",
-            "artist": derived_album_artist_from_contributors,
-            "status": "initializing",
-            "total_tracks": total_tracks_for_report,
-            "title": album_name_for_report,
-            "url": album_link_for_report # Use the actual album link
-        })
+        report_progress(
+            reporter=Download_JOB.progress_reporter,
+            report_type="album",
+            artist=derived_album_artist_from_contributors,
+            status="initializing",
+            total_tracks=total_tracks_for_report,
+            title=album_name_for_report,
+            url=album_link_for_report
+        )
         
         infos_dw = API_GW.get_album_data(self.__ids)['data']
 
@@ -1183,14 +1242,42 @@ class DW_ALBUM:
         album_name = self.__song_metadata.get('album', 'Unknown Album')
         total_tracks = self.__song_metadata.get('nb_tracks', 0)
         
-        Download_JOB.report_progress({
-            "type": "album",
-            "artist": derived_album_artist_from_contributors,
-            "status": "done",
-            "total_tracks": total_tracks,
-            "title": album_name,
-            "url": album_link_for_report # Use the actual album link
-        })
+        successful_tracks = []
+        failed_tracks = []
+        skipped_tracks = []
+        for track in tracks:
+            track_info = {
+                "name": track.tags.get('music') or track.tags.get('name', 'Unknown Track'),
+                "artist": track.tags.get('artist', 'Unknown Artist')
+            }
+            if getattr(track, 'was_skipped', False):
+                skipped_tracks.append(track_info)
+            elif track.success:
+                successful_tracks.append(track_info)
+            else:
+                track_info["reason"] = getattr(track, 'error_message', 'Unknown reason')
+                failed_tracks.append(track_info)
+
+        report_progress(
+            reporter=Download_JOB.progress_reporter,
+            report_type="album",
+            artist=derived_album_artist_from_contributors,
+            status="done",
+            total_tracks=total_tracks,
+            title=album_name,
+            url=album_link_for_report, # Use the actual album link
+            summary={
+                "successful_tracks": [f"{t['name']} - {t['artist']}" for t in successful_tracks],
+                "skipped_tracks": [f"{t['name']} - {t['artist']}" for t in skipped_tracks],
+                "failed_tracks": [{
+                    "track": f"{t['name']} - {t['artist']}",
+                    "reason": t['reason']
+                } for t in failed_tracks],
+                "total_successful": len(successful_tracks),
+                "total_skipped": len(skipped_tracks),
+                "total_failed": len(failed_tracks)
+            }
+        )
         
         return album
 
@@ -1215,14 +1302,15 @@ class DW_PLAYLIST:
         total_tracks = self.__json_data.get('nb_tracks', 0)
         
         # Report playlist initializing status
-        Download_JOB.report_progress({
-            "type": "playlist",
-            "owner": playlist_owner,
-            "status": "initializing",
-            "total_tracks": total_tracks,
-            "name": playlist_name,
-            "url": f"https://deezer.com/playlist/{self.__ids}"
-        })
+        report_progress(
+            reporter=Download_JOB.progress_reporter,
+            report_type="playlist",
+            owner=playlist_owner,
+            status="initializing",
+            total_tracks=total_tracks,
+            name=playlist_name,
+            url=f"https://deezer.com/playlist/{self.__ids}"
+        )
         
         # Retrieve playlist data from API
         infos_dw = API_GW.get_playlist_data(self.__ids)['data']
@@ -1378,14 +1466,44 @@ class DW_PLAYLIST:
         playlist_owner = self.__json_data.get('creator', {}).get('name', 'Unknown Owner')
         total_tracks = self.__json_data.get('nb_tracks', 0)
         
-        Download_JOB.report_progress({
-            "type": "playlist",
-            "owner": playlist_owner,
-            "status": "done",
-            "total_tracks": total_tracks,
-            "name": playlist_name,
-            "url": f"https://deezer.com/playlist/{self.__ids}"
-        })
+        successful_tracks = []
+        failed_tracks = []
+        skipped_tracks = []
+        for track in tracks:
+            track_name = track.tags.get('music') or track.tags.get('name', 'Unknown Track')
+            artist_name = track.tags.get('artist', 'Unknown Artist')
+            track_info = {
+                "name": track_name,
+                "artist": artist_name
+            }
+            if getattr(track, 'was_skipped', False):
+                skipped_tracks.append(track_info)
+            elif track.success:
+                successful_tracks.append(track_info)
+            else:
+                track_info["reason"] = getattr(track, 'error_message', 'Unknown reason')
+                failed_tracks.append(track_info)
+
+        report_progress(
+            reporter=Download_JOB.progress_reporter,
+            report_type="playlist",
+            owner=playlist_owner,
+            status="done",
+            total_tracks=total_tracks,
+            name=playlist_name,
+            url=f"https://deezer.com/playlist/{self.__ids}",
+            summary={
+                "successful_tracks": [f"{t['name']} - {t['artist']}" for t in successful_tracks],
+                "skipped_tracks": [f"{t['name']} - {t['artist']}" for t in skipped_tracks],
+                "failed_tracks": [{
+                    "track": f"{t['name']} - {t['artist']}",
+                    "reason": t['reason']
+                } for t in failed_tracks],
+                "total_successful": len(successful_tracks),
+                "total_skipped": len(skipped_tracks),
+                "total_failed": len(failed_tracks)
+            }
+        )
         
         return playlist
 
@@ -1435,19 +1553,20 @@ class DW_EPISODE:
             total_size = int(response.headers.get('content-length', 0))
             
             # Send initial progress status
-            progress_data = {
-                "type": "episode",
-                "song": self.__preferences.song_metadata.get('name', ''),
-                "artist": self.__preferences.song_metadata.get('publisher', ''),
-                "status": "progress",
-                "url": f"https://www.deezer.com/episode/{self.__ids}",
-                "parent": {
-                    "type": "show",
-                    "title": self.__preferences.song_metadata.get('show', ''),
-                    "artist": self.__preferences.song_metadata.get('publisher', '')
-                }
+            parent = {
+                "type": "show",
+                "title": self.__preferences.song_metadata.get('artist', ''),
+                "artist": self.__preferences.song_metadata.get('artist', '')
             }
-            Download_JOB.report_progress(progress_data)
+            report_progress(
+                reporter=Download_JOB.progress_reporter,
+                report_type="episode",
+                song=self.__preferences.song_metadata.get('music', ''),
+                artist=self.__preferences.song_metadata.get('artist', ''),
+                status="progress",
+                url=f"https://www.deezer.com/episode/{self.__ids}",
+                parent=parent
+            )
             
             with open(output_path, 'wb') as f:
                 start_time = time.time()
@@ -1464,21 +1583,22 @@ class DW_EPISODE:
                             last_report_time = current_time
                             percentage = round((downloaded / total_size) * 100, 2)
                             
-                            progress_data = {
-                                "type": "episode",
-                                "song": self.__preferences.song_metadata.get('name', ''),
-                                "artist": self.__preferences.song_metadata.get('publisher', ''),
-                                "status": "real-time",
-                                "url": f"https://www.deezer.com/episode/{self.__ids}",
-                                "time_elapsed": int((current_time - start_time) * 1000),
-                                "progress": percentage,
-                                "parent": {
-                                    "type": "show",
-                                    "title": self.__preferences.song_metadata.get('show', ''),
-                                    "artist": self.__preferences.song_metadata.get('publisher', '')
-                                }
+                            parent = {
+                                "type": "show",
+                                "title": self.__preferences.song_metadata.get('artist', ''),
+                                "artist": self.__preferences.song_metadata.get('artist', '')
                             }
-                            Download_JOB.report_progress(progress_data)
+                            report_progress(
+                                reporter=Download_JOB.progress_reporter,
+                                report_type="episode",
+                                song=self.__preferences.song_metadata.get('music', ''),
+                                artist=self.__preferences.song_metadata.get('artist', ''),
+                                status="real-time",
+                                url=f"https://www.deezer.com/episode/{self.__ids}",
+                                time_elapsed=int((current_time - start_time) * 1000),
+                                progress=percentage,
+                                parent=parent
+                            )
             
             episode = Track(
                 self.__preferences.song_metadata,
@@ -1491,19 +1611,20 @@ class DW_EPISODE:
             episode.success = True
             
             # Send completion status
-            progress_data = {
-                "type": "episode",
-                "song": self.__preferences.song_metadata.get('name', ''),
-                "artist": self.__preferences.song_metadata.get('publisher', ''),
-                "status": "done",
-                "url": f"https://www.deezer.com/episode/{self.__ids}",
-                "parent": {
-                    "type": "show",
-                    "title": self.__preferences.song_metadata.get('show', ''),
-                    "artist": self.__preferences.song_metadata.get('publisher', '')
-                }
+            parent = {
+                "type": "show",
+                "title": self.__preferences.song_metadata.get('artist', ''),
+                "artist": self.__preferences.song_metadata.get('artist', '')
             }
-            Download_JOB.report_progress(progress_data)
+            report_progress(
+                reporter=Download_JOB.progress_reporter,
+                report_type="episode",
+                song=self.__preferences.song_metadata.get('music', ''),
+                artist=self.__preferences.song_metadata.get('artist', ''),
+                status="done",
+                url=f"https://www.deezer.com/episode/{self.__ids}",
+                parent=parent
+            )
             
             # Save cover image for the episode
             if self.__preferences.save_cover:

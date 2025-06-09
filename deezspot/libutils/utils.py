@@ -163,6 +163,13 @@ def apply_custom_format(format_str, metadata: dict, pad_tracks=True) -> str:
         else:
             # Original non-indexed placeholder logic (for %album%, %title%, %artist%, %ar_album%, etc.)
             value = metadata.get(full_key, '')
+
+            if full_key == 'year' and value:
+                if isinstance(value, datetime):
+                    return str(value.year)
+                # Fallback for string-based dates like "YYYY-MM-DD" or just "YYYY"
+                return str(value).split('-')[0]
+
             if pad_tracks and full_key in ['tracknum', 'discnum']:
                 str_value = str(value)
                 # Pad with leading zero if it's a single digit
