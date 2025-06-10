@@ -27,9 +27,9 @@ class API:
 		}
 
 	@classmethod
-	def __get_api(cls, url, quota_exceeded = False):
+	def __get_api(cls, url, params=None, quota_exceeded=False):
 		try:
-			response = req_get(url, headers=cls.headers)
+			response = req_get(url, headers=cls.headers, params=params)
 			response.raise_for_status()
 			return response.json()
 		except requests.exceptions.RequestException as e:
@@ -54,7 +54,41 @@ class API:
 	def get_album(cls, album_id):
 		url = f"{cls.__api_link}album/{album_id}"
 		infos = cls.__get_api(url)
-
+		
+		# Check if we need to handle pagination for tracks
+		if infos.get('nb_tracks', 0) > 25 and 'tracks' in infos and 'data' in infos['tracks']:
+			# Get all tracks with pagination
+			all_tracks = infos['tracks']['data']
+			initial_track_count = len(all_tracks)
+			
+			logger.debug(f"Album has {infos['nb_tracks']} tracks, initially retrieved {initial_track_count}. Starting pagination.")
+			
+			# Keep fetching next pages using index-based pagination
+			page_count = 1
+			remaining_tracks = infos['nb_tracks'] - initial_track_count
+			
+			while remaining_tracks > 0:
+				page_count += 1
+				next_url = f"{cls.__api_link}album/{album_id}/tracks?index={initial_track_count + (page_count-2)*25}"
+				logger.debug(f"Fetching page {page_count} of album tracks from: {next_url}")
+				
+				try:
+					next_data = cls.__get_api(next_url)
+					if 'data' in next_data and next_data['data']:
+						all_tracks.extend(next_data['data'])
+						logger.debug(f"Now have {len(all_tracks)}/{infos['nb_tracks']} tracks after page {page_count}")
+						remaining_tracks = infos['nb_tracks'] - len(all_tracks)
+					else:
+						logger.warning(f"No data found in next page response, stopping pagination")
+						break
+				except Exception as e:
+					logger.error(f"Error fetching next page: {str(e)}")
+					break
+			
+			# Replace the tracks data with our complete list
+			infos['tracks']['data'] = all_tracks
+			logger.info(f"Album pagination complete: retrieved all {len(all_tracks)} tracks for album {album_id}")
+		
 		return infos
 
 	@classmethod
@@ -350,10 +384,16 @@ class API:
 		song_metadata['ar_album'] = "; ".join(ar_album)
 		sm_items = song_metadata.items()
 
-		for track_info_from_album_json in album_json['tracks']['data']:
+		# Ensure we have all tracks (including paginated ones)
+		album_tracks = album_json['tracks']['data']
+		logger.debug(f"Processing metadata for {len(album_tracks)} tracks in album '{album_json['title']}'")
+
+		for track_idx, track_info_from_album_json in enumerate(album_tracks, 1):
 			c_ids = track_info_from_album_json['id']
-			track_title_for_error = track_info_from_album_json.get('title', 'Unknown Track')
-			track_artist_for_error = track_info_from_album_json.get('artist', {}).get('name', 'Unknown Artist')
+			track_title = track_info_from_album_json.get('title', 'Unknown Track')
+			track_artist = track_info_from_album_json.get('artist', {}).get('name', 'Unknown Artist')
+			
+			logger.debug(f"Processing track {track_idx}/{len(album_tracks)}: '{track_title}' by '{track_artist}' (ID: {c_ids})")
 			
 			current_track_metadata_or_error = None
 			track_failed = False
@@ -367,46 +407,79 @@ class API:
 					market_str = ", ".join([m.upper() for m in market])
 				elif isinstance(market, str):
 					market_str = market.upper()
-				logger.warning(f"Track '{track_title_for_error}' (ID: {c_ids}) in album '{album_json.get('title','Unknown Album')}' not available in market(s) '{market_str}': {e.message}")
+				logger.warning(f"Track '{track_title}' (ID: {c_ids}) in album '{album_json.get('title','Unknown Album')}' not available in market(s) '{market_str}': {e.message}")
 				current_track_metadata_or_error = {
 					'error_type': 'MarketAvailabilityError', 
 					'message': e.message, 
-					'name': track_title_for_error, 
-					'artist': track_artist_for_error, 
+					'name': track_title, 
+					'artist': track_artist, 
 					'ids': c_ids,
 					'checked_markets': market_str # Store the markets that were checked
 				}
 				track_failed = True
 			except NoDataApi as e_nd:
-				logger.warning(f"Track '{track_title_for_error}' (ID: {c_ids}) in album '{album_json.get('title','Unknown Album')}' data not found: {str(e_nd)}")
-				current_track_metadata_or_error = {
-					'error_type': 'NoDataApi', 
-					'message': str(e_nd), 
-					'name': track_title_for_error, 
-					'artist': track_artist_for_error, 
-					'ids': c_ids
-				}
-				track_failed = True
-			except requests.exceptions.ConnectionError as e_conn: # Added to catch connection errors here
-				logger.warning(f"Connection error fetching metadata for track '{track_title_for_error}' (ID: {c_ids}) in album '{album_json.get('title','Unknown Album')}': {str(e_conn)}")
-				current_track_metadata_or_error = {
-				    'error_type': 'ConnectionError',
-				    'message': f"Connection error: {str(e_conn)}",
-				    'name': track_title_for_error,
-				    'artist': track_artist_for_error,
-				    'ids': c_ids
-				}
-				track_failed = True
-			except Exception as e_other_track_meta: # Catch any other unexpected error for this specific track
-				logger.warning(f"Unexpected error fetching metadata for track '{track_title_for_error}' (ID: {c_ids}) in album '{album_json.get('title','Unknown Album')}': {str(e_other_track_meta)}")
-				current_track_metadata_or_error = {
-				    'error_type': 'TrackMetadataError',
-				    'message': str(e_other_track_meta),
-				    'name': track_title_for_error,
-				    'artist': track_artist_for_error,
-				    'ids': c_ids
-				}
-				track_failed = True
+				logger.warning(f"Track '{track_title}' (ID: {c_ids}) in album '{album_json.get('title','Unknown Album')}' data not found: {str(e_nd)}")
+				
+				# Even when the track API fails, use data from the album response
+				if not track_failed:
+					current_track_metadata_or_error = {
+						'music': track_title,
+						'artist': track_artist,
+						'tracknum': str(track_info_from_album_json.get('track_position', track_idx)),
+						'discnum': str(track_info_from_album_json.get('disk_number', 1)),
+						'duration': track_info_from_album_json.get('duration', 0)
+					}
+				else:
+					current_track_metadata_or_error = {
+						'error_type': 'NoDataApi', 
+						'message': str(e_nd), 
+						'name': track_title, 
+						'artist': track_artist, 
+						'ids': c_ids
+					}
+					track_failed = True
+			except requests.exceptions.ConnectionError as e_conn:
+				logger.warning(f"Connection error fetching metadata for track '{track_title}' (ID: {c_ids}) in album '{album_json.get('title','Unknown Album')}': {str(e_conn)}")
+				
+				# Use album track data as fallback
+				if not track_failed:
+					current_track_metadata_or_error = {
+						'music': track_title,
+						'artist': track_artist,
+						'tracknum': str(track_info_from_album_json.get('track_position', track_idx)),
+						'discnum': str(track_info_from_album_json.get('disk_number', 1)),
+						'duration': track_info_from_album_json.get('duration', 0)
+					}
+				else:
+					current_track_metadata_or_error = {
+						'error_type': 'ConnectionError',
+						'message': f"Connection error: {str(e_conn)}",
+						'name': track_title,
+						'artist': track_artist,
+						'ids': c_ids
+					}
+					track_failed = True
+			except Exception as e_other_track_meta:
+				logger.warning(f"Unexpected error fetching metadata for track '{track_title}' (ID: {c_ids}) in album '{album_json.get('title','Unknown Album')}': {str(e_other_track_meta)}")
+				
+				# Use album track data as fallback
+				if not track_failed:
+					current_track_metadata_or_error = {
+						'music': track_title,
+						'artist': track_artist,
+						'tracknum': str(track_info_from_album_json.get('track_position', track_idx)),
+						'discnum': str(track_info_from_album_json.get('disk_number', 1)),
+						'duration': track_info_from_album_json.get('duration', 0)
+					}
+				else:
+					current_track_metadata_or_error = {
+						'error_type': 'TrackMetadataError',
+						'message': str(e_other_track_meta),
+						'name': track_title,
+						'artist': track_artist,
+						'ids': c_ids
+					}
+					track_failed = True
 
 			for key, list_template in sm_items:
 				if isinstance(list_template, list):
@@ -420,6 +493,21 @@ class API:
 						else:
 							song_metadata[key].append(None)
 					else:
-						song_metadata[key].append(current_track_metadata_or_error.get(key))
+						if key in current_track_metadata_or_error:
+							song_metadata[key].append(current_track_metadata_or_error.get(key))
+						elif key == 'music':
+							# Fallback to track title from album data
+							song_metadata[key].append(track_title)
+						elif key == 'artist':
+							# Fallback to artist from album data
+							song_metadata[key].append(track_artist)
+						elif key == 'tracknum':
+							# Fallback to position in album
+							song_metadata[key].append(str(track_info_from_album_json.get('track_position', track_idx)))
+						elif key == 'discnum':
+							# Fallback to disk number from album data
+							song_metadata[key].append(str(track_info_from_album_json.get('disk_number', 1)))
+						else:
+							song_metadata[key].append(None)
 
 		return song_metadata
