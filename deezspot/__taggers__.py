@@ -11,7 +11,7 @@ from mutagen.id3 import (
 	APIC, COMM, SYLT, TALB, TCOM, TCON, TCOP, TDRC, TEXT, TIT2, TLEN,
 	TPE1, TPE2, TPOS, TPUB, TRCK, TSRC, TXXX, USLT, TYER
 )
-from deezspot.models.download import Track, Episode
+from deezspot.models import Track, Episode
 import requests
 import logging
 import os

@@ -7,6 +7,17 @@ from .common import IDs
 
 
 @dataclass
+class artistTrackObject:
+    """
+    An artist when nested inside a track context.
+    No genres, no albums—just identifying info.
+    """
+    type: str = "artistTrack"
+    name: str = ""
+    ids: IDs = field(default_factory=IDs)
+
+
+@dataclass
 class albumArtistObject:
     """Album when nested inside an artist context."""
     type: str = "albumArtist"
