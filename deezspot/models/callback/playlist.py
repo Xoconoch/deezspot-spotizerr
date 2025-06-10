@@ -33,7 +33,6 @@ class trackPlaylistObject:
     title: str = ""
     position: int = 0  # Position in the playlist
     duration_ms: int = 0  # mandatory
-    # Nested objects instead of string references
     artist: artistTrackPlaylistObject = field(default_factory=artistTrackPlaylistObject)
     album: albumTrackPlaylistObject = field(default_factory=albumTrackPlaylistObject)
     ids: IDs = field(default_factory=IDs)

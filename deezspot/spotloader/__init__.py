@@ -11,7 +11,7 @@ from deezspot.libutils.utils import (
     link_is_valid,
     what_kind,
 )
-from deezspot.models import (
+from deezspot.models.download import (
     Track,
     Album,
     Playlist,

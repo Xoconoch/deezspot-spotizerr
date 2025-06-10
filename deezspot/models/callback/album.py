@@ -19,18 +19,6 @@ class trackAlbumObject:
 
 
 @dataclass
-class albumTrackObject:
-    """Album when nested inside a track context."""
-    type: str = "albumTrack"
-    album_type: str = ""  # "album" | "single" | "compilation"
-    title: str = ""
-    release_date: Dict[str, Any] = field(default_factory=dict)  # ReleaseDate as dict
-    total_tracks: int = 0
-    genres: List[str] = field(default_factory=list)
-    ids: IDs = field(default_factory=IDs)
-
-
-@dataclass
 class albumObject:
     """A standalone album/single/compilation, with nested trackAlbumObject[] for its tracks."""
     type: str = "album"

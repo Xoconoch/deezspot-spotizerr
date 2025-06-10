@@ -6,7 +6,7 @@ from deezspot.deezloader.dee_api import API
 from deezspot.easy_spoty import Spo
 from deezspot.deezloader.deegw_api import API_GW
 from deezspot.deezloader.deezer_settings import stock_quality
-from deezspot.models import (
+from deezspot.models.download import (
     Track,
     Album,
     Playlist,

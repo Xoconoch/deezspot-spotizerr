@@ -1,11 +1,32 @@
 #!/usr/bin/python3
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from .common import IDs
-from .album import albumTrackObject
-from .artist import artistTrackObject
+
+
+@dataclass
+class artistTrackObject:
+    """
+    An artist when nested inside a track context.
+    No genres, no albums—just identifying info.
+    """
+    type: str = "artistTrack"
+    name: str = ""
+    ids: IDs = field(default_factory=IDs)
+
+
+@dataclass
+class albumTrackObject:
+    """Album when nested inside a track context."""
+    type: str = "albumTrack"
+    album_type: str = ""  # "album" | "single" | "compilation"
+    title: str = ""
+    release_date: Dict[str, Any] = field(default_factory=dict)  # ReleaseDate as dict
+    total_tracks: int = 0
+    genres: List[str] = field(default_factory=list)
+    ids: IDs = field(default_factory=IDs)
 
 
 @dataclass
