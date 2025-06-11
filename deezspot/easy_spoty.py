@@ -105,6 +105,31 @@ class Spo:
         return track_json
 
     @classmethod
+    def get_tracks(cls, ids: list, market: str = None, client_id=None, client_secret=None):
+        """
+        Get information for multiple tracks by a list of IDs.
+        
+        Args:
+            ids (list): A list of Spotify track IDs.
+            market (str, optional): An ISO 3166-1 alpha-2 country code.
+            client_id (str, optional): Optional custom Spotify client ID.
+            client_secret (str, optional): Optional custom Spotify client secret.
+            
+        Returns:
+            dict: A dictionary containing a list of track information.
+        """
+        api = cls.__get_api(client_id, client_secret)
+        try:
+            tracks_json = api.tracks(ids, market=market)
+        except SpotifyException as error:
+            if error.http_status in cls.__error_codes:
+                # Create a string of the first few IDs for the error message
+                ids_preview = ', '.join(ids[:3]) + ('...' if len(ids) > 3 else '')
+                raise InvalidLink(f"one or more IDs in the list: [{ids_preview}]")
+        
+        return tracks_json
+
+    @classmethod
     def get_album(cls, ids, client_id=None, client_secret=None):
         """
         Get album information by ID.

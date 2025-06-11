@@ -10,6 +10,7 @@ class IDs:
     spotify: Optional[str] = None
     deezer: Optional[str] = None
     isrc: Optional[str] = None
+    upc: Optional[str] = None
 
 
 @dataclass

@@ -4,6 +4,7 @@ import logging
 import sys
 from typing import Optional, Callable, Dict, Any, Union
 import json
+from dataclasses import asdict
 
 from deezspot.models.callback.callbacks import (
     BaseStatusObject, 
@@ -165,7 +166,8 @@ def report_progress(
         raise TypeError(f"callback_obj must be of type trackCallbackObject, albumCallbackObject, or playlistCallbackObject, got {type(callback_obj)}")
     
     # Convert the callback object to a dictionary and report it
+    report_dict = asdict(callback_obj)
     if reporter:
-        reporter.report(callback_obj.__dict__)
+        reporter.report(report_dict)
     else:
-        logger.info(json.dumps(callback_obj.__dict__)) 
+        logger.info(json.dumps(report_dict)) 

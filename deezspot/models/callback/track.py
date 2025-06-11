@@ -32,6 +32,7 @@ class albumTrackObject:
     release_date: Dict[str, Any] = field(default_factory=dict)  # ReleaseDate as dict
     total_tracks: int = 0
     genres: List[str] = field(default_factory=list)
+    images: List[Dict[str, Any]] = field(default_factory=list)
     ids: IDs = field(default_factory=IDs)
     artists: List[artistAlbumTrackObject] = field(default_factory=list)
 
@@ -52,6 +53,7 @@ class trackObject:
     disc_number: int = 1
     track_number: int = 1
     duration_ms: int = 0  # mandatory
+    explicit: bool = False
     genres: List[str] = field(default_factory=list)
     album: albumTrackObject = field(default_factory=albumTrackObject)
     artists: List[artistTrackObject] = field(default_factory=list)

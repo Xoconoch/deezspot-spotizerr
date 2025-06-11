@@ -19,6 +19,7 @@ from deezspot.models.download import (
     Smart,
     Episode
 )
+from deezspot.models.callback import trackCallbackObject, errorObject
 from deezspot.spotloader.__download__ import (
     DW_TRACK,
     DW_ALBUM,
@@ -98,6 +99,7 @@ class SpoLogin:
         save_cover=stock_save_cover,
         market: list[str] | None = stock_market
     ) -> Track:
+        song_metadata = None
         try:
             link_is_valid(link_track)
             ids = get_ids(link_track)
@@ -106,7 +108,7 @@ class SpoLogin:
             if song_metadata is None:
                 raise Exception(f"Could not retrieve metadata for track {link_track}. It might not be available or an API error occurred.")
 
-            logger.info(f"Starting download for track: {song_metadata.get('music', 'Unknown')} - {song_metadata.get('artist', 'Unknown')}")
+            logger.info(f"Starting download for track: {song_metadata.title} - {'; '.join([a.name for a in song_metadata.artists])}")
 
             preferences = Preferences()
             preferences.real_time_dl = real_time_dl
@@ -140,60 +142,22 @@ class SpoLogin:
         except MarketAvailabilityError as e:
             logger.error(f"Track download failed due to market availability: {str(e)}")
             if song_metadata:
-                track_info = {
-                    "name": song_metadata.get("music", "Unknown Track"),
-                    "artist": song_metadata.get("artist", "Unknown Artist"),
-                }
-                summary = {
-                    "successful_tracks": [],
-                    "skipped_tracks": [],
-                    "failed_tracks": [{
-                        "track": f"{track_info['name']} - {track_info['artist']}",
-                        "reason": str(e)
-                    }],
-                    "total_successful": 0,
-                    "total_skipped": 0,
-                    "total_failed": 1
-                }
+                status_obj = errorObject(ids=song_metadata.ids, error=str(e))
+                callback_obj = trackCallbackObject(track=song_metadata, status_info=status_obj)
                 report_progress(
                     reporter=self.progress_reporter,
-                    report_type="track",
-                    song=track_info['name'],
-                    artist=track_info['artist'],
-                    status="error",
-                    url=link_track,
-                    error=str(e),
-                    summary=summary
+                    callback_obj=callback_obj
                 )
             raise
         except Exception as e:
             logger.error(f"Failed to download track: {str(e)}")
             traceback.print_exc()
             if song_metadata:
-                track_info = {
-                    "name": song_metadata.get("music", "Unknown Track"),
-                    "artist": song_metadata.get("artist", "Unknown Artist"),
-                }
-                summary = {
-                    "successful_tracks": [],
-                    "skipped_tracks": [],
-                    "failed_tracks": [{
-                        "track": f"{track_info['name']} - {track_info['artist']}",
-                        "reason": str(e)
-                    }],
-                    "total_successful": 0,
-                    "total_skipped": 0,
-                    "total_failed": 1
-                }
+                status_obj = errorObject(ids=song_metadata.ids, error=str(e))
+                callback_obj = trackCallbackObject(track=song_metadata, status_info=status_obj)
                 report_progress(
                     reporter=self.progress_reporter,
-                    report_type="track",
-                    song=track_info['name'],
-                    artist=track_info['artist'],
-                    status="error",
-                    url=link_track,
-                    error=str(e),
-                    summary=summary
+                    callback_obj=callback_obj
                 )
             raise e
 
@@ -228,7 +192,7 @@ class SpoLogin:
             if song_metadata is None:
                 raise Exception(f"Could not process album metadata for {link_album}. It might not be available in the specified market(s) or an API error occurred.")
 
-            logger.info(f"Starting download for album: {song_metadata.get('album', 'Unknown')} - {song_metadata.get('ar_album', 'Unknown')}")
+            logger.info(f"Starting download for album: {song_metadata.title} - {'; '.join([a.name for a in song_metadata.artists])}")
 
             preferences = Preferences()
             preferences.real_time_dl = real_time_dl
@@ -300,90 +264,50 @@ class SpoLogin:
             
             logger.info(f"Starting download for playlist: {playlist_json.get('name', 'Unknown')}")
 
-            for track_item_wrapper in playlist_json['tracks']['items']:
-                track_info = track_item_wrapper.get('track')
-                c_song_metadata = None # Initialize for each item
-
-                if not track_info:
-                    logger.warning(f"Skipping an item in playlist {playlist_json.get('name', 'Unknown Playlist')} as it does not appear to be a valid track object.")
-                    # Create a placeholder for this unidentifiable item
-                    c_song_metadata = {
-                        'name': 'Unknown Skipped Item',
-                        'ids': None,
-                        'error_type': 'InvalidItemStructure',
-                        'error_message': 'Playlist item was not a valid track object.'
-                    }
-                    song_metadata.append(c_song_metadata)
+            playlist_tracks_data = playlist_json.get('tracks', {}).get('items', [])
+            if not playlist_tracks_data:
+                logger.warning(f"Playlist {link_playlist} has no tracks or could not be fetched.")
+                # We can still proceed to create an empty playlist object for consistency
+                
+            song_metadata_list = []
+            for item in playlist_tracks_data:
+                if not item or 'track' not in item or not item['track']:
+                    # Log a warning for items that are not valid tracks (e.g., local files, etc.)
+                    logger.warning(f"Skipping an item in playlist {link_playlist} as it does not appear to be a valid track object.")
+                    song_metadata_list.append({'error_type': 'invalid_track_object', 'error_message': 'Playlist item was not a valid track object.', 'name': 'Unknown Skipped Item', 'ids': None})
+                    continue
+                
+                track_data = item['track']
+                track_id = track_data.get('id')
+                
+                if not track_id:
+                    logger.warning(f"Skipping an item in playlist {link_playlist} because it has no track ID.")
+                    song_metadata_list.append({'error_type': 'missing_track_id', 'error_message': 'Playlist item is missing a track ID.', 'name': track_data.get('name', 'Unknown Track without ID'), 'ids': None})
                     continue
 
-                track_name_for_logs = track_info.get('name', 'Unknown Track')
-                track_id_for_logs = track_info.get('id', 'Unknown ID') # Track's own ID if available
-                external_urls = track_info.get('external_urls')
-
-                if not external_urls or not external_urls.get('spotify'):
-                    logger.warning(f"Track \"{track_name_for_logs}\" (ID: {track_id_for_logs}) in playlist {playlist_json.get('name', 'Unknown Playlist')} is not available on Spotify or has no URL.")
-                    c_song_metadata = {
-                        'name': track_name_for_logs,
-                        'ids': track_id_for_logs, # Use track's own ID if available, otherwise will be None
-                        'error_type': 'MissingTrackURL',
-                        'error_message': f"Track \"{track_name_for_logs}\" is not available on Spotify or has no URL."
-                    }
-                else:
-                    track_spotify_url = external_urls['spotify']
-                    track_ids_from_url = get_ids(track_spotify_url) # This is the ID used for fetching with 'tracking'
-                    try:
-                        # Market check for each track is done within tracking()
-                        # Pass market. tracking() will raise MarketAvailabilityError if unavailable.
-                        fetched_metadata = tracking(track_ids_from_url, market=market)
-                        if fetched_metadata:
-                            c_song_metadata = fetched_metadata
-                        else:
-                            # tracking() returned None, but didn't raise MarketAvailabilityError. General fetch error.
-                            logger.warning(f"Could not retrieve full metadata for track {track_name_for_logs} (ID: {track_ids_from_url}, URL: {track_spotify_url}) in playlist {playlist_json.get('name', 'Unknown Playlist')}. API error or other issue.")
-                            c_song_metadata = {
-                                'name': track_name_for_logs,
-                                'ids': track_ids_from_url,
-                                'error_type': 'MetadataFetchError',
-                                'error_message': f"Failed to fetch full metadata for track {track_name_for_logs}."
-                            }
-                    except MarketAvailabilityError as e:
-                        logger.warning(f"Track {track_name_for_logs} (ID: {track_ids_from_url}, URL: {track_spotify_url}) in playlist {playlist_json.get('name', 'Unknown Playlist')} is not available in the specified market(s). Skipping. Error: {str(e)}")
-                        c_song_metadata = {
-                            'name': track_name_for_logs,
-                            'ids': track_ids_from_url,
-                            'error_type': 'MarketAvailabilityError',
-                            'error_message': str(e)
-                        }
-                    except Exception as e_tracking: # Catch any other unexpected error from tracking()
-                        logger.error(f"Unexpected error fetching metadata for track {track_name_for_logs} (ID: {track_ids_from_url}, URL: {track_spotify_url}): {str(e_tracking)}")
-                        c_song_metadata = {
-                            'name': track_name_for_logs,
-                            'ids': track_ids_from_url,
-                            'error_type': 'UnexpectedTrackingError',
-                            'error_message': f"Unexpected error fetching metadata: {str(e_tracking)}"
-                        }
-                
-                if c_song_metadata: # Ensure something is appended
-                    song_metadata.append(c_song_metadata)
-                else:
-                    # This case should ideally not be reached if logic above is complete
-                    logger.error(f"Logic error: c_song_metadata remained None for track {track_name_for_logs} in playlist {playlist_json.get('name', 'Unknown Playlist')}")
-                    song_metadata.append({
-                        'name': track_name_for_logs,
-                        'ids': track_id_for_logs or track_ids_from_url,
-                        'error_type': 'InternalLogicError',
-                        'error_message': 'Internal error processing playlist track metadata.'
-                    })
-
+                try:
+                    song_metadata = tracking(track_id, market=market)
+                    if song_metadata:
+                        song_metadata_list.append(song_metadata)
+                    else:
+                        # Create a placeholder for tracks that fail metadata fetching
+                        failed_track_info = {'error_type': 'metadata_fetch_failed', 'error_message': f"Failed to fetch metadata for track ID: {track_id}", 'name': track_data.get('name', f'Track ID {track_id}'), 'ids': track_id}
+                        song_metadata_list.append(failed_track_info)
+                        logger.warning(f"Could not retrieve metadata for track {track_id} in playlist {link_playlist}.")
+                except MarketAvailabilityError as e:
+                    failed_track_info = {'error_type': 'market_availability_error', 'error_message': str(e), 'name': track_data.get('name', f'Track ID {track_id}'), 'ids': track_id}
+                    song_metadata_list.append(failed_track_info)
+                    logger.warning(str(e))
 
             preferences = Preferences()
             preferences.real_time_dl = real_time_dl
             preferences.link = link_playlist
-            preferences.song_metadata = song_metadata
+            preferences.song_metadata = song_metadata_list
             preferences.quality_download = quality_download
             preferences.output_dir = output_dir
             preferences.ids = ids
             preferences.json_data = playlist_json
+            preferences.playlist_tracks_json = playlist_tracks_data
             preferences.recursive_quality = recursive_quality
             preferences.recursive_download = recursive_download
             preferences.not_interface = not_interface
@@ -403,7 +327,7 @@ class SpoLogin:
                 preferences.bitrate = bitrate
             preferences.save_cover = save_cover
             preferences.market = market
-
+            
             playlist = DW_PLAYLIST(preferences).dw()
 
             return playlist
@@ -445,7 +369,7 @@ class SpoLogin:
             if episode_metadata is None:
                 raise Exception(f"Could not process episode metadata for {link_episode}. It might not be available in the specified market(s) or an API error occurred.")
             
-            logger.info(f"Starting download for episode: {episode_metadata.get('name', 'Unknown')} - {episode_metadata.get('show', 'Unknown')}")
+            logger.info(f"Starting download for episode: {episode_metadata.title} - {episode_metadata.album.title}")
 
             preferences = Preferences()
             preferences.real_time_dl = real_time_dl

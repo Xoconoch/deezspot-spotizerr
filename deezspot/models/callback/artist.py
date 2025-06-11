@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from .common import IDs
 
@@ -23,5 +23,6 @@ class artistObject:
     type: str = "artist"
     name: str = ""
     genres: List[str] = field(default_factory=list)
+    images: List[Dict[str, Any]] = field(default_factory=list)
     ids: IDs = field(default_factory=IDs)
     albums: List[albumArtistObject] = field(default_factory=list) 
