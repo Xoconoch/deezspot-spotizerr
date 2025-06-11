@@ -46,6 +46,7 @@ class trackPlaylistObject:
     ids: IDs = field(default_factory=IDs)
     disc_number: int = 1
     track_number: int = 1
+    explicit: bool = False
 
 
 @dataclass

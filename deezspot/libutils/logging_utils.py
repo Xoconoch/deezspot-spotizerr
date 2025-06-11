@@ -150,6 +150,22 @@ class ProgressReporter:
 #       }
 #
 
+def _remove_nulls(data):
+    """
+    Recursively remove null values from dictionaries and lists.
+    
+    Args:
+        data: Any Python data structure (dict, list, etc.)
+        
+    Returns:
+        The same structure with null values removed
+    """
+    if isinstance(data, dict):
+        return {k: _remove_nulls(v) for k, v in data.items() if v is not None}
+    elif isinstance(data, list):
+        return [_remove_nulls(item) for item in data if item is not None]
+    return data
+
 def report_progress(
     reporter: Optional["ProgressReporter"],
     callback_obj: Union[trackCallbackObject, albumCallbackObject, playlistCallbackObject]
@@ -165,8 +181,9 @@ def report_progress(
     if not isinstance(callback_obj, (trackCallbackObject, albumCallbackObject, playlistCallbackObject)):
         raise TypeError(f"callback_obj must be of type trackCallbackObject, albumCallbackObject, or playlistCallbackObject, got {type(callback_obj)}")
     
-    # Convert the callback object to a dictionary and report it
-    report_dict = asdict(callback_obj)
+    # Convert the callback object to a dictionary and filter out null values
+    report_dict = _remove_nulls(asdict(callback_obj))
+    
     if reporter:
         reporter.report(report_dict)
     else:

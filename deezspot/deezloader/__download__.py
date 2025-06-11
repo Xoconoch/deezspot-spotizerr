@@ -46,6 +46,95 @@ from deezspot.libutils.logging_utils import logger, ProgressReporter, report_pro
 from deezspot.libutils.skip_detection import check_track_exists
 from deezspot.libutils.cleanup_utils import register_active_download, unregister_active_download
 from deezspot.libutils.audio_converter import AUDIO_FORMATS # Added for parse_format_string
+from deezspot.models.callback.callbacks import (
+    trackCallbackObject,
+    albumCallbackObject,
+    playlistCallbackObject,
+    initializingObject,
+    skippedObject,
+    retryingObject,
+    realTimeObject,
+    errorObject,
+    doneObject,
+    summaryObject,
+    failedTrackObject,
+)
+from deezspot.models.callback.track import trackObject as trackCbObject, albumTrackObject, artistTrackObject, playlistTrackObject
+from deezspot.models.callback.album import albumObject as albumCbObject
+from deezspot.models.callback.playlist import playlistObject as playlistCbObject
+from deezspot.models.callback.common import IDs
+from deezspot.models.callback.user import userObject
+
+def _track_object_to_dict(track_obj: trackCbObject) -> dict:
+    """
+    Convert a track object to a dictionary format for tagging.
+    Similar to spotloader's approach for consistent metadata handling.
+    """
+    if not track_obj:
+        return {}
+    
+    tags = {}
+    
+    # Track details
+    tags['music'] = track_obj.title
+    tags['tracknum'] = track_obj.track_number if track_obj.track_number is not None else 0
+    tags['discnum'] = track_obj.disc_number if track_obj.disc_number is not None else 1
+    tags['duration'] = track_obj.duration_ms // 1000 if track_obj.duration_ms else 0
+    tags['explicit'] = track_obj.explicit
+    if track_obj.ids:
+        tags['ids'] = track_obj.ids.deezer
+        tags['isrc'] = track_obj.ids.isrc
+        
+    tags['artist'] = "; ".join([artist.name for artist in track_obj.artists])
+
+    # Album details
+    if track_obj.album:
+        album = track_obj.album
+        tags['album'] = album.title
+        tags['ar_album'] = "; ".join([artist.name for artist in album.artists])
+        tags['nb_tracks'] = album.total_tracks
+        if album.release_date:
+            tags['year'] = album.release_date.get('year', 0)
+            
+        if album.ids:
+            tags['upc'] = album.ids.upc
+            tags['album_id'] = album.ids.deezer
+        
+        tags['genre'] = "; ".join(album.genres) if album.genres else ""
+        
+        # Extract image information if available
+        if hasattr(album, 'images') and album.images:
+            tags['image'] = album.images
+
+    return tags
+
+def _album_object_to_dict(album_obj: albumCbObject) -> dict:
+    """
+    Convert an album object to a dictionary format for tagging.
+    Similar to spotloader's approach for consistent metadata handling.
+    """
+    if not album_obj:
+        return {}
+        
+    tags = {}
+
+    # Album details
+    tags['album'] = album_obj.title
+    tags['ar_album'] = "; ".join([artist.name for artist in album_obj.artists])
+    tags['nb_tracks'] = album_obj.total_tracks
+    if album_obj.release_date:
+        tags['year'] = album_obj.release_date.get('year', 0)
+
+    if album_obj.ids:
+        tags['upc'] = album_obj.ids.upc
+        tags['album_id'] = album_obj.ids.deezer
+    
+    if hasattr(album_obj, 'images') and album_obj.images:
+        tags['image'] = album_obj.images
+        
+    tags['genre'] = "; ".join(album_obj.genres) if album_obj.genres else ""
+        
+    return tags
 
 class Download_JOB:
     progress_reporter = None
@@ -175,6 +264,12 @@ class Download_JOB:
         return final_medias
 
 class EASY_DW:
+    progress_reporter = None
+    
+    @classmethod
+    def set_progress_reporter(cls, reporter):
+        cls.progress_reporter = reporter
+        
     def __init__(
         self,
         infos_dw: dict,
@@ -196,7 +291,6 @@ class EASY_DW:
         self.__convert_to = getattr(preferences, 'convert_to', None)
         self.__bitrate = getattr(preferences, 'bitrate', None) # Added for consistency
 
-
         if self.__infos_dw.get('__TYPE__') == 'episode':
             self.__song_metadata = {
                 'music': self.__infos_dw.get('EPISODE_TITLE', ''),
@@ -212,7 +306,11 @@ class EASY_DW:
             }
             self.__download_type = "episode"
         else:
-            self.__song_metadata = preferences.song_metadata
+            # Get the track object from preferences
+            self.__track_obj: trackCbObject = preferences.song_metadata
+            
+            # Convert it to the dictionary format needed for legacy functions
+            self.__song_metadata = self._track_object_to_dict(self.__track_obj)
             self.__download_type = "track"
 
         self.__c_quality = qualities[self.__quality_download]
@@ -220,6 +318,83 @@ class EASY_DW:
 
         self.__set_quality()
         self.__write_track()
+
+    def _get_parent_context(self):
+        parent_obj = None
+        current_track_val = None
+        total_tracks_val = None
+
+        if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
+            playlist_data = self.__preferences.json_data
+            
+            if isinstance(playlist_data, dict):
+                # Spotify raw dict
+                parent_obj = playlistTrackObject(
+                    title=playlist_data.get('name', 'unknown'),
+                    description=playlist_data.get('description', ''),
+                    owner=userObject(name=playlist_data.get('owner', {}).get('display_name', 'unknown')),
+                    ids=IDs(spotify=playlist_data.get('id', ''))
+                )
+            else:
+                # Deezer playlistObject
+                playlist_data_obj: playlistCbObject = playlist_data
+                parent_obj = playlistTrackObject(
+                    title=playlist_data_obj.title,
+                    description=playlist_data_obj.description,
+                    owner=playlist_data_obj.owner,
+                    ids=playlist_data_obj.ids
+                )
+            
+            total_tracks_val = getattr(self.__preferences, 'total_tracks', 0)
+            current_track_val = getattr(self.__preferences, 'track_number', 0)
+
+        elif self.__parent == "album" and hasattr(self.__preferences, "json_data"):
+            album_data = self.__preferences.json_data
+            album_id = album_data.ids.deezer
+            parent_obj = albumCbObject(
+                title=album_data.title,
+                artists=[artistTrackObject(name=artist.name) for artist in album_data.artists],
+                ids=IDs(deezer=album_id)
+            )
+            total_tracks_val = getattr(self.__preferences, 'total_tracks', 0)
+            current_track_val = getattr(self.__preferences, 'track_number', 0)
+
+        return parent_obj, current_track_val, total_tracks_val
+
+    def _track_object_to_dict(self, track_obj: any) -> dict:
+        """
+        Helper to convert a track object (of any kind) to the dict format 
+        expected by legacy tagging and path functions.
+        It intelligently finds the album information based on the download context.
+        """
+        # Use the new global helper function for basic conversion
+        metadata_dict = _track_object_to_dict(track_obj)
+        
+        # Add Deezer-specific metadata handling that isn't in the basic helper
+        
+        # For full album downloads, use complete album data from preferences if available
+        if self.__parent == 'album' and hasattr(self.__preferences, 'json_data'):
+            album_data_source = self.__preferences.json_data
+            # Update album-related fields with more complete information
+            if hasattr(album_data_source, 'label'):
+                metadata_dict['label'] = album_data_source.label
+                
+        # Check for track_position and disk_number in the original API data
+        # These might be directly available in the infos_dw dictionary for Deezer tracks
+        if self.__infos_dw:
+            if 'track_position' in self.__infos_dw:
+                metadata_dict['tracknum'] = self.__infos_dw['track_position']
+            if 'disk_number' in self.__infos_dw:
+                metadata_dict['discnum'] = self.__infos_dw['disk_number']
+            
+            # Check for contributors from original API data
+            if 'contributors' in self.__infos_dw:
+                # Filter for main artists only
+                main_artists = [c['name'] for c in self.__infos_dw['contributors'] if c.get('role') == 'Main']
+                if main_artists:
+                    metadata_dict['album_artist'] = "; ".join(main_artists)
+
+        return metadata_dict
 
     def __set_quality(self) -> None:
         self.__file_format = self.__c_quality['f_format']
@@ -309,95 +484,38 @@ class EASY_DW:
             self.__c_track.song_path = existing_file_path
             _, new_ext = os.path.splitext(existing_file_path)
             self.__c_track.file_format = new_ext.lower()
-            # self.__c_track.song_quality might need re-evaluation if we could determine
-            # quality of existing file. For now, assume it's acceptable.
-            
             self.__c_track.success = True
             self.__c_track.was_skipped = True
 
-            parent = None
-            current_track = None
-            total_tracks = None
-            summary = None
-            current_track_val = None  # Initialize to avoid reference error
-            total_tracks_val = None   # Initialize to avoid potential similar issues
+            parent_obj, current_track_val, total_tracks_val = self._get_parent_context()
 
-            # Add parent info based on parent type
-            if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
-                playlist_data = self.__preferences.json_data
-                is_spotify_playlist = 'display_name' in playlist_data.get('owner', {})
-                
-                if is_spotify_playlist:
-                    playlist_name = playlist_data.get('name', 'unknown')
-                    owner = playlist_data.get('owner', {}).get('display_name', 'unknown')
-                    total_tracks = playlist_data.get('tracks', {}).get('total', 0)
-                    playlist_id = playlist_data.get('id', '')
-                    url = f"https://open.spotify.com/playlist/{playlist_id}"
-                else: # Deezer logic
-                    playlist_name = playlist_data.get('title', 'unknown')
-                    owner = playlist_data.get('creator', {}).get('name', 'unknown')
-                    total_tracks = getattr(self.__preferences, 'total_tracks', 0)
-                    playlist_id = playlist_data.get('id', '')
-                    url = f"https://deezer.com/playlist/{playlist_id}"
-
-                total_tracks_val = getattr(self.__preferences, 'total_tracks', total_tracks)
-                current_track_val = getattr(self.__preferences, 'track_number', 0)
-
-                parent = {
-                    "type": "playlist",
-                    "name": playlist_name,
-                    "owner": owner,
-                    "total_tracks": total_tracks_val,
-                    "url": url
-                }
-            elif self.__parent == "album":
-                album_name = self.__song_metadata.get('album', '')
-                album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('album_artist', ''))
-                total_tracks = getattr(self.__preferences, 'total_tracks', 0)
-                current_track = getattr(self.__preferences, 'track_number', 0)
-                current_track_val = current_track  # Ensure current_track_val is set
-                total_tracks_val = total_tracks    # Ensure total_tracks_val is set
-                
-                # Format for album-parented tracks exactly as required
-                parent = {
-                    "type": "album",
-                    "title": album_name,
-                    "artist": album_artist,
-                    "total_tracks": total_tracks,
-                    "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"
-                }
+            status_obj = skippedObject(
+                ids=self.__track_obj.ids,
+                reason=f"Track already exists in desired format at {existing_file_path}",
+                convert_to=self.__convert_to,
+                bitrate=self.__bitrate
+            )
+            
+            callback_obj = trackCallbackObject(
+                track=self.__track_obj,
+                status_info=status_obj,
+                parent=parent_obj,
+                current_track=current_track_val,
+                total_tracks=total_tracks_val
+            )
         
             if self.__parent is None:
-                track_info = {
-                    "name": current_title,
-                    "artist": current_artist
-                }
-                summary = {
-                    "successful_tracks": [],
-                    "skipped_tracks": [f"{track_info['name']} - {track_info['artist']}"],
-                    "failed_tracks": [],
-                    "total_successful": 0,
-                    "total_skipped": 1,
-                    "total_failed": 0,
-                }
+                summary = summaryObject(
+                    skipped_tracks=[self.__track_obj],
+                    total_skipped=1
+                )
+                status_obj.summary = summary
 
             report_progress(
                 reporter=Download_JOB.progress_reporter,
-                report_type="track",
-                song=current_title,
-                artist=self.__song_metadata['artist'],
-                status="skipped",
-                url=self.__link,
-                reason=f"Track already exists in desired format at {existing_file_path}",
-                convert_to=self.__convert_to,
-                bitrate=self.__bitrate,
-                parent=parent,
-                current_track=current_track_val,
-                total_tracks=total_tracks_val,
-                summary=summary
+                callback_obj=callback_obj
             )
-            # self.__c_track might not be fully initialized here if __write_track() hasn't been called
-            # Create a minimal track object for skipped scenario
+
             skipped_item = Track(
                 self.__song_metadata,
                 existing_file_path, # Use the path of the existing file
@@ -420,89 +538,35 @@ class EASY_DW:
 
         try:
             if self.__infos_dw.get('__TYPE__') == 'episode':
-                # download_episode_try should set self.__c_episode.success = True if successful
-                self.download_episode_try() # This will modify self.__c_episode directly
+                self.download_episode_try()
             else:
-                # download_try should set self.__c_track.success = True if successful
-                self.download_try() # This will modify self.__c_track directly
+                self.download_try()
                 
-                # Create done status report using the new required format (only if download_try didn't fail)
-                # This part should only execute if download_try itself was successful (i.e., no exception)
-                if self.__c_track.success : # Check if download_try marked it as successful
-                    parent = None
-                    current_track = None
-                    total_tracks = None
-                    summary = None
-
-                    spotify_url = getattr(self.__preferences, 'spotify_url', None)
-                    url = spotify_url if spotify_url else self.__link
-
-                    if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
-                        playlist_data = self.__preferences.json_data
-                        is_spotify_playlist = 'display_name' in playlist_data.get('owner', {})
-                        if is_spotify_playlist:
-                            playlist_name = playlist_data.get('name', 'unknown')
-                            owner = playlist_data.get('owner', {}).get('display_name', 'unknown')
-                            playlist_id = playlist_data.get('id', '')
-                            playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
-                        else: # Deezer logic
-                            playlist_name = playlist_data.get('title', 'unknown')
-                            owner = playlist_data.get('creator', {}).get('name', 'unknown')
-                            playlist_id = playlist_data.get('id', '')
-                            playlist_url = f"https://deezer.com/playlist/{playlist_data.get('id', '')}"
-
-                        total_tracks = getattr(self.__preferences, 'total_tracks', 0)
-                        current_track = getattr(self.__preferences, 'track_number', 0)
-                        parent = {
-                            "type": "playlist",
-                            "name": playlist_name,
-                            "owner": owner,
-                            "total_tracks": total_tracks,
-                            "url": playlist_url
-                        }
-                    elif self.__parent == "album":
-                        album_name = self.__song_metadata.get('album', '')
-                        album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('album_artist', ''))
-                        total_tracks = getattr(self.__preferences, 'total_tracks', 0)
-                        current_track = getattr(self.__preferences, 'track_number', 0)
-                        parent = {
-                            "type": "album",
-                            "title": album_name,
-                            "artist": album_artist,
-                            "total_tracks": total_tracks,
-                            "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"
-                        }
+                if self.__c_track.success :
+                    parent_obj, current_track_val, total_tracks_val = self._get_parent_context()
+                    
+                    done_status = doneObject(ids=self.__track_obj.ids, convert_to=self.__convert_to)
                     
                     if self.__parent is None:
-                        track_info = {
-                            "name": self.__song_metadata.get('music', 'Unknown Track'),
-                            "artist": self.__song_metadata.get('artist', 'Unknown Artist')
-                        }
-                        summary = {
-                            "successful_tracks": [f"{track_info['name']} - {track_info['artist']}"],
-                            "skipped_tracks": [],
-                            "failed_tracks": [],
-                            "total_successful": 1,
-                            "total_skipped": 0,
-                            "total_failed": 0,
-                        }
-
+                        summary = summaryObject(
+                            successful_tracks=[self.__track_obj],
+                            total_successful=1
+                        )
+                        done_status.summary = summary
+                        
+                    callback_obj = trackCallbackObject(
+                        track=self.__track_obj,
+                        status_info=done_status,
+                        parent=parent_obj,
+                        current_track=current_track_val,
+                        total_tracks=total_tracks_val
+                    )
                     report_progress(
                         reporter=Download_JOB.progress_reporter,
-                        report_type="track",
-                        song=self.__song_metadata['music'],
-                        artist=self.__song_metadata['artist'],
-                        album=self.__song_metadata.get("album", ""),
-                        status="done",
-                        url=url,
-                        parent=parent,
-                        current_track=current_track,
-                        total_tracks=total_tracks,
-                        convert_to=self.__convert_to,
-                        summary=summary
+                        callback_obj=callback_obj
                     )
 
-        except Exception as e: # Covers failures within download_try or download_episode_try
+        except Exception as e:
             item_type = "Episode" if self.__infos_dw.get('__TYPE__') == 'episode' else "Track"
             item_name = self.__song_metadata.get('music', f'Unknown {item_type}')
             artist_name = self.__song_metadata.get('artist', 'Unknown Artist')
@@ -513,6 +577,26 @@ class EASY_DW:
             if current_item_obj:
                 current_item_obj.success = False
                 current_item_obj.error_message = error_message
+            
+            if item_type == "Track":
+                parent_obj, current_track_val, total_tracks_val = self._get_parent_context()
+                
+                error_obj = errorObject(
+                    ids=self.__track_obj.ids,
+                    error=error_message
+                )
+                callback_obj = trackCallbackObject(
+                    track=self.__track_obj,
+                    status_info=error_obj,
+                    parent=parent_obj,
+                    current_track=current_track_val,
+                    total_tracks=total_tracks_val
+                )
+                report_progress(
+                    reporter=Download_JOB.progress_reporter,
+                    callback_obj=callback_obj
+                )
+
             raise TrackNotFound(message=error_message, url=self.__link) from e
 
         # --- Handling after download attempt --- 
@@ -617,93 +701,69 @@ class EASY_DW:
 
             c_crypted_audio = crypted_audio.iter_content(2048)
             
-            # Get track IDs and encryption information
-            # The enhanced check_track_ids function will determine the encryption type
             self.__fallback_ids = check_track_ids(self.__infos_dw)
             encryption_type = self.__fallback_ids.get('encryption_type', 'unknown')
             logger.debug(f"Using encryption type: {encryption_type}")
 
+            parent_obj, current_track_val, total_tracks_val = self._get_parent_context()
+
             try:
                 self.__write_track()
                 
-                # Send immediate progress status for the track
-                parent = None
-                current_track = None
-                total_tracks = None
-                spotify_url = getattr(self.__preferences, 'spotify_url', None)
-                url = spotify_url if spotify_url else self.__link
+                status_obj = initializingObject(ids=self.__track_obj.ids)
                 
-                if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
-                    playlist_data = self.__preferences.json_data
-                    is_spotify_playlist = 'display_name' in playlist_data.get('owner', {})
-                    if is_spotify_playlist:
-                        playlist_name = playlist_data.get('name', 'unknown')
-                        owner = playlist_data.get('owner', {}).get('display_name', 'unknown')
-                        playlist_id = playlist_data.get('id', '')
-                        playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
-                    else: # Deezer logic
-                        playlist_name = playlist_data.get('title', 'unknown')
-                        owner = playlist_data.get('creator', {}).get('name', 'unknown')
-                        playlist_id = playlist_data.get('id', '')
-                        playlist_url = f"https://deezer.com/playlist/{playlist_data.get('id', '')}"
-
-                    total_tracks = getattr(self.__preferences, 'total_tracks', 0)
-                    current_track = getattr(self.__preferences, 'track_number', 0)
-                    parent = {
-                        "type": "playlist",
-                        "name": playlist_name,
-                        "owner": owner,
-                        "total_tracks": total_tracks,
-                        "url": playlist_url
-                    }
-                elif self.__parent == "album":
-                    album_name = self.__song_metadata.get('album', '')
-                    album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('album_artist', ''))
-                    total_tracks = getattr(self.__preferences, 'total_tracks', 0)
-                    current_track = getattr(self.__preferences, 'track_number', 0)
-                    parent = {
-                        "type": "album",
-                        "title": album_name,
-                        "artist": album_artist,
-                        "total_tracks": total_tracks,
-                        "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"
-                    }
+                callback_obj = trackCallbackObject(
+                    track=self.__track_obj,
+                    status_info=status_obj,
+                    parent=parent_obj,
+                    current_track=current_track_val,
+                    total_tracks=total_tracks_val
+                )
 
                 report_progress(
                     reporter=Download_JOB.progress_reporter,
-                    report_type="track",
-                    song=self.__song_metadata.get("music", ""),
-                    artist=self.__song_metadata.get("artist", ""),
-                    album=self.__song_metadata.get("album", ""),
-                    status="initializing",
-                    url=url,
-                    parent=parent,
-                    current_track=current_track,
-                    total_tracks=total_tracks,
+                    callback_obj=callback_obj
                 )
                 
-                # Start of processing block (decryption, tagging, cover, conversion)
                 register_active_download(self.__song_path)
                 try:
-                    # Decrypt the file using the utility function
                     decryptfile(c_crypted_audio, self.__fallback_ids, self.__song_path)
                     logger.debug(f"Successfully decrypted track using {encryption_type} encryption")
-                    # self.__song_path is still registered
                 except Exception as e_decrypt:
                     unregister_active_download(self.__song_path)
                     if isfile(self.__song_path):
                         try:
                             os.remove(self.__song_path)
-                        except OSError: # Handle potential errors during removal
+                        except OSError:
                             logger.warning(f"Could not remove partially downloaded file: {self.__song_path}")
                     self.__c_track.success = False
                     self.__c_track.error_message = f"Decryption failed: {str(e_decrypt)}"
+                    
+                    # Ensure error callback uses the same parent_obj that was created earlier
+                    error_status = errorObject(
+                        ids=self.__track_obj.ids,
+                        error=f"Decryption failed: {str(e_decrypt)}",
+                        convert_to=self.__convert_to
+                    )
+                    
+                    error_callback_obj = trackCallbackObject(
+                        track=self.__track_obj,
+                        status_info=error_status,
+                        parent=parent_obj,  # Use the same parent_obj created earlier
+                        current_track=current_track_val,
+                        total_tracks=total_tracks_val
+                    )
+
+                    report_progress(
+                        reporter=Download_JOB.progress_reporter,
+                        callback_obj=error_callback_obj
+                    )
+                    
                     raise TrackNotFound(f"Failed to process {self.__song_path}. Error: {str(e_decrypt)}") from e_decrypt
 
-                self.__add_more_tags() # self.__song_metadata is updated here
-                self.__c_track.tags = self.__song_metadata # IMPORTANT: Update track object's tags
+                self.__add_more_tags()
+                self.__c_track.tags = self.__song_metadata
 
-                # Save cover image if requested
                 if self.__preferences.save_cover and self.__song_metadata.get('image'):
                     try:
                         track_directory = os.path.dirname(self.__song_path)
@@ -712,51 +772,34 @@ class EASY_DW:
                     except Exception as e_img_save:
                         logger.warning(f"Failed to save cover image for track: {e_img_save}")
 
-                # Apply audio conversion if requested
                 if self.__convert_to:
                     format_name, bitrate = self._parse_format_string(self.__convert_to)
                     if format_name:
-                        # Current self.__song_path (original decrypted file) is registered.
-                        # convert_audio will handle unregistering it if it creates a new file,
-                        # and will register the new file.
                         path_before_conversion = self.__song_path
                         try:
                             converted_path = convert_audio(
                                 path_before_conversion, 
                                 format_name, 
-                                bitrate if bitrate else self.__bitrate, # Prefer specific bitrate from string, fallback to general
+                                bitrate if bitrate else self.__bitrate,
                                 register_active_download,
                                 unregister_active_download
                             )
                             if converted_path != path_before_conversion:
-                                # convert_audio has unregistered path_before_conversion (if it existed and was different)
-                                # and registered converted_path.
                                 self.__song_path = converted_path
                                 self.__c_track.song_path = converted_path
                                 _, new_ext = os.path.splitext(converted_path)
-                                self.__file_format = new_ext.lower() # Update internal state
+                                self.__file_format = new_ext.lower()
                                 self.__c_track.file_format = new_ext.lower()
-                                # self.__song_path (the converted_path) is now the registered active download
-                            # If converted_path == path_before_conversion, no actual file change, registration status managed by convert_audio
                         except Exception as conv_error:
                             logger.error(f"Audio conversion error: {str(conv_error)}. Proceeding with original format.")
-                            # path_before_conversion should still be registered if convert_audio failed early
-                            # or did not successfully unregister it.
-                            # If conversion fails, the original file (path_before_conversion) remains the target.
-                            # Its registration state should be preserved if convert_audio didn't affect it.
-                            # For safety, ensure it is considered the active download if conversion fails:
                             register_active_download(path_before_conversion)
 
 
-                # Write tags to the final file (original or converted)
                 write_tags(self.__c_track)
-                self.__c_track.success = True # Mark as successful only after all steps including tags
-                unregister_active_download(self.__song_path) # Unregister the final successful file
+                self.__c_track.success = True
+                unregister_active_download(self.__song_path)
 
-            except Exception as e: # Handles errors from __write_track, decrypt, add_tags, save_cover, convert, write_tags
-                # Ensure unregister is called for self.__song_path if it was registered and an error occurred
-                # The specific error might have already unregistered it (e.g. decrypt error)
-                # Call it defensively.
+            except Exception as e:
                 unregister_active_download(self.__song_path)
                 if isfile(self.__song_path):
                     try:
@@ -771,57 +814,23 @@ class EASY_DW:
                 elif "403" in error_msg or "Forbidden" in error_msg: error_msg = "Access denied - Track might be region-restricted or premium-only"
                 elif "404" in error_msg or "Not Found" in error_msg: error_msg = "Track not found - It might have been removed"
                 
-                # (Error reporting code as it exists)
-                parent = None
-                current_track = None
-                total_tracks = None
-
-                if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
-                    playlist_data = self.__preferences.json_data
-                    is_spotify_playlist = 'display_name' in playlist_data.get('owner', {})
-                    if is_spotify_playlist:
-                        playlist_name = playlist_data.get('name', 'unknown')
-                        owner = playlist_data.get('owner', {}).get('display_name', 'unknown')
-                        playlist_id = playlist_data.get('id', '')
-                        playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
-                    else: # Deezer logic
-                        playlist_name = playlist_data.get('title', 'unknown')
-                        owner = playlist_data.get('creator', {}).get('name', 'unknown')
-                        playlist_id = playlist_data.get('id', '')
-                        playlist_url = f"https://deezer.com/playlist/{playlist_data.get('id', '')}"
-
-                    total_tracks = getattr(self.__preferences, 'total_tracks', 0)
-                    current_track = getattr(self.__preferences, 'track_number', 0)
-                    parent = {
-                        "type": "playlist", "name": playlist_name, 
-                        "owner": owner, 
-                        "total_tracks": total_tracks, 
-                        "url": playlist_url
-                    }
-                elif self.__parent == "album":
-                    album_name = self.__song_metadata.get('album', '')
-                    album_artist = self.__song_metadata.get('album_artist', self.__song_metadata.get('album_artist', ''))
-                    total_tracks = getattr(self.__preferences, 'total_tracks', 0)
-                    current_track = getattr(self.__preferences, 'track_number', 0)
-                    parent = {
-                        "type": "album", "title": album_name, 
-                        "artist": album_artist, 
-                        "total_tracks": total_tracks, 
-                        "url": f"https://deezer.com/album/{self.__preferences.song_metadata.get('album_id', '')}"
-                    }
+                error_status = errorObject(
+                    ids=self.__track_obj.ids,
+                    error=error_msg,
+                    convert_to=self.__convert_to
+                )
+                
+                callback_obj = trackCallbackObject(
+                    track=self.__track_obj,
+                    status_info=error_status,
+                    parent=parent_obj,  # Use the same parent_obj created earlier
+                    current_track=current_track_val,
+                    total_tracks=total_tracks_val
+                )
 
                 report_progress(
                     reporter=Download_JOB.progress_reporter,
-                    report_type="track",
-                    status="error",
-                    song=self.__song_metadata.get('music', ''),
-                    artist=self.__song_metadata.get('artist', ''),
-                    error=error_msg,
-                    url=getattr(self.__preferences, 'spotify_url', None) or self.__link,
-                    convert_to=self.__convert_to,
-                    parent=parent,
-                    current_track=current_track,
-                    total_tracks=total_tracks
+                    callback_obj=callback_obj
                 )
                 logger.error(f"Failed to process track: {error_msg}")
                 
@@ -831,13 +840,11 @@ class EASY_DW:
 
             return self.__c_track
 
-        except Exception as e: # Outer exception for initial media checks, etc.
+        except Exception as e:
             song_title = self.__song_metadata.get('music', 'Unknown Song')
             artist_name = self.__song_metadata.get('artist', 'Unknown Artist')
             error_message = f"Download failed for '{song_title}' by '{artist_name}' (Link: {self.__link}). Error: {str(e)}"
             logger.error(error_message)
-            # Store error on track object if possible
-            # Ensure self.__song_path is unregistered if an error occurs before successful completion.
             unregister_active_download(self.__song_path)
             if hasattr(self, '_EASY_DW__c_track') and self.__c_track:
                 self.__c_track.success = False
@@ -948,61 +955,48 @@ class EASY_DW:
         return format_name, bitrate
 
     def __add_more_tags(self) -> None:
+        """
+        Add Deezer-specific metadata to the song metadata dictionary.
+        This preserves Deezer's unique features like lyrics and contributors.
+        """
         contributors = self.__infos_dw.get('SNG_CONTRIBUTORS', {})
 
-        if "author" in contributors:
-            self.__song_metadata['author'] = "; ".join(
-                contributors['author']
-            )
-        else:
-            self.__song_metadata['author'] = ""
+        # Add contributor information
+        self.__song_metadata['author'] = "; ".join(contributors.get('author', []))
+        self.__song_metadata['composer'] = "; ".join(contributors.get('composer', []))
+        self.__song_metadata['lyricist'] = "; ".join(contributors.get('lyricist', []))
+        
+        if contributors.get('composerlyricist'):
+            self.__song_metadata['composer'] = "; ".join(contributors.get('composerlyricist', []))
 
-        if "composer" in contributors:
-            self.__song_metadata['composer'] = "; ".join(
-                contributors['composer']
-            )
-        else:
-            self.__song_metadata['composer'] = ""
-
-        if "lyricist" in contributors:
-            self.__song_metadata['lyricist'] = "; ".join(
-                contributors['lyricist']
-            )
-        else:
-            self.__song_metadata['lyricist'] = ""
-
-        if "composerlyricist" in contributors:
-            self.__song_metadata['composer'] = "; ".join(
-                contributors['composerlyricist']
-            )
-        else:
-            self.__song_metadata['composerlyricist'] = ""
-
-        if "version" in self.__infos_dw:
-            self.__song_metadata['version'] = self.__infos_dw['VERSION']
-        else:
-            self.__song_metadata['version'] = ""
-
+        # Add version information if available
+        self.__song_metadata['version'] = self.__infos_dw.get('VERSION', '')
+        
+        # Initialize lyric fields
         self.__song_metadata['lyric'] = ""
         self.__song_metadata['copyright'] = ""
-        self.__song_metadata['lyricist'] = ""
         self.__song_metadata['lyric_sync'] = []
 
+        # Add lyrics if available
         if self.__infos_dw.get('LYRICS_ID', 0) != 0:
-            need = API_GW.get_lyric(self.__ids)
+            try:
+                lyrics_data = API_GW.get_lyric(self.__ids)
 
-            if "LYRICS_TEXT" in need:
-                self.__song_metadata['lyric'] = need["LYRICS_TEXT"]
+                if lyrics_data and "LYRICS_TEXT" in lyrics_data:
+                    self.__song_metadata['lyric'] = lyrics_data["LYRICS_TEXT"]
 
-            if "LYRICS_SYNC_JSON" in need:
-                self.__song_metadata['lyric_sync'] = trasform_sync_lyric(
-                    need['LYRICS_SYNC_JSON']
-                )
-
-        # This method should only add tags. Error handling for download success/failure
-        # is managed by easy_dw after calls to download_try/download_episode_try.
-        # No error re-raising or success flag modification here.
-        # write_tags is called after this in download_try if successful.
+                if lyrics_data and "LYRICS_SYNC_JSON" in lyrics_data:
+                    self.__song_metadata['lyric_sync'] = trasform_sync_lyric(
+                        lyrics_data['LYRICS_SYNC_JSON']
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to retrieve lyrics: {str(e)}")
+                
+        # Extract album artist from contributors with 'Main' role
+        if 'contributors' in self.__infos_dw:
+            main_artists = [c['name'] for c in self.__infos_dw['contributors'] if c.get('role') == 'Main']
+            if main_artists:
+                self.__song_metadata['album_artist'] = "; ".join(main_artists)
 
 class DW_TRACK:
     def __init__(
@@ -1025,23 +1019,56 @@ class DW_TRACK:
         )
 
         infos_dw['media_url'] = media[0]
-
-        # For individual tracks, parent is None (not part of album or playlist)
         track = EASY_DW(infos_dw, self.__preferences, parent=self.__parent).easy_dw()
 
-        # Check if track failed but was NOT intentionally skipped
         if not track.success and not getattr(track, 'was_skipped', False):
-            song = f"{self.__song_metadata['music']} - {self.__song_metadata['artist']}"
-            # Attempt to get the original error message if available from the track object
-            original_error = getattr(track, 'error_message', "it's not available in this format or an error occurred.")
-            error_msg = f"Cannot download '{song}'. Reason: {original_error}"
-            current_link = track.link if hasattr(track, 'link') and track.link else self.__preferences.link
-            logger.error(f"{error_msg} (Link: {current_link})")
-            raise TrackNotFound(message=error_msg, url=current_link)
+            error_msg = getattr(track, 'error_message', "An unknown error occurred during download.")
+            raise TrackNotFound(message=error_msg, url=track.link or self.__preferences.link)
 
         return track
 
 class DW_ALBUM:
+    def _album_object_to_dict(self, album_obj: albumCbObject) -> dict:
+        """Converts an albumObject to a dictionary for tagging and path generation."""
+        # Use the new global helper function
+        return _album_object_to_dict(album_obj)
+
+    def _track_object_to_dict(self, track_obj: any, album_obj: albumCbObject) -> dict:
+        """Converts a track object to a dictionary with album context."""
+        # Check if track_obj is a trackAlbumObject which doesn't have its own album attribute
+        if hasattr(track_obj, 'type') and track_obj.type == 'trackAlbum':
+            # Create a trackObject with album reference from the provided album_obj
+            from deezspot.models.callback.track import trackObject
+            full_track = trackObject(
+                title=track_obj.title,
+                disc_number=track_obj.disc_number,
+                track_number=track_obj.track_number,
+                duration_ms=track_obj.duration_ms,
+                explicit=track_obj.explicit,
+                ids=track_obj.ids,
+                artists=track_obj.artists,
+                album=album_obj,  # Use the parent album
+                genres=getattr(track_obj, 'genres', [])
+            )
+            # Now use the new track object with the global helper
+            track_dict = _track_object_to_dict(full_track)
+        else:
+            # Use the global helper function with additional album context
+            track_dict = _track_object_to_dict(track_obj)
+        
+        # Add album-specific context that might not be in the track object
+        if album_obj:
+            track_dict['album'] = album_obj.title
+            track_dict['album_artist'] = "; ".join([artist.name for artist in album_obj.artists])
+            track_dict['upc'] = album_obj.ids.upc if album_obj.ids else None
+            track_dict['genre'] = "; ".join(album_obj.genres)
+            
+            # Preserve ISRC if available in the track object
+            if track_obj.ids and track_obj.ids.isrc and not track_dict.get('isrc'):
+                track_dict['isrc'] = track_obj.ids.isrc
+            
+        return track_dict
+
     def __init__(
         self,
         preferences: Preferences
@@ -1054,277 +1081,144 @@ class DW_ALBUM:
         self.__not_interface = self.__preferences.not_interface
         self.__quality_download = self.__preferences.quality_download
         self.__recursive_quality = self.__preferences.recursive_quality
-        self.__song_metadata = self.__preferences.song_metadata
-
-        self.__song_metadata_items = self.__song_metadata.items()
+        album_obj: albumCbObject = self.__preferences.song_metadata
+        self.__song_metadata = self._album_object_to_dict(album_obj)
 
     def dw(self) -> Album:
-        # Helper function to find most frequent item in a list
-        def most_frequent(items):
-            if not items:
-                return None
-            return max(set(items), key=items.count)
-        
-        # Derive album_artist strictly from the album's API contributors
-        album_api_contributors = self.__preferences.json_data.get('contributors', [])
-        derived_album_artist_from_contributors = "Unknown Artist" # Default
-
-        if album_api_contributors: # Check if contributors list is not empty
-            main_contributor_names = [
-                c.get('name') for c in album_api_contributors
-                if c.get('name') and c.get('role', '').lower() == 'main'
-            ]
-
-            if main_contributor_names:
-                derived_album_artist_from_contributors = "; ".join(main_contributor_names)
-            else: # No 'Main' contributors, try all contributors with a name
-                all_contributor_names = [
-                    c.get('name') for c in album_api_contributors if c.get('name')
-                ]
-                if all_contributor_names:
-                    derived_album_artist_from_contributors = "; ".join(all_contributor_names)
-        # If album_api_contributors is empty or no names were found, it remains "Unknown Artist"
-
-
         # Report album initializing status
-        album_name_for_report = self.__song_metadata.get('album', 'Unknown Album')
-        total_tracks_for_report = self.__song_metadata.get('nb_tracks', 0)
-        album_link_for_report = self.__preferences.link # Get album link from preferences
-        
+        album_obj = self.__preferences.json_data
+        status_obj = initializingObject(ids=album_obj.ids)
+        callback_obj = albumCallbackObject(album=album_obj, status_info=status_obj)
+
         report_progress(
             reporter=Download_JOB.progress_reporter,
-            report_type="album",
-            artist=derived_album_artist_from_contributors,
-            status="initializing",
-            total_tracks=total_tracks_for_report,
-            title=album_name_for_report,
-            url=album_link_for_report
+            callback_obj=callback_obj
         )
         
         infos_dw = API_GW.get_album_data(self.__ids)['data']
-
         md5_image = infos_dw[0]['ALB_PICTURE']
-        image_bytes = API.choose_img(md5_image, size="1400x1400") # Fetch highest quality
-        self.__song_metadata['image'] = image_bytes # Store for tagging if needed, already bytes
+        image_bytes = API.choose_img(md5_image, size="1400x1400")
+        
+        # Convert album object to dictionary for legacy functions
+        album_dict = self._album_object_to_dict(album_obj)
+        album_dict['image'] = image_bytes
 
         album = Album(self.__ids)
-        album.image = image_bytes # Store raw image bytes
+        album.image = image_bytes
         album.md5_image = md5_image
-        album.nb_tracks = self.__song_metadata['nb_tracks']
-        album.album_name = self.__song_metadata['album']
-        album.upc = self.__song_metadata['upc']
+        album.nb_tracks = album_obj.total_tracks
+        album.album_name = album_obj.title
+        album.upc = album_obj.ids.upc
+        album.tags = album_dict
         tracks = album.tracks
-        album.tags = self.__song_metadata
 
-        # Get media URLs using the splitting approach
-        medias = Download_JOB.check_sources(
-            infos_dw, self.__quality_download
-        )
+        medias = Download_JOB.check_sources(infos_dw, self.__quality_download)
         
-        # Determine album base directory once
         album_base_directory = get_album_directory(
-            self.__song_metadata, # Album level metadata
+            album.tags,
             self.__output_dir,
             custom_dir_format=self.__preferences.custom_dir_format,
             pad_tracks=self.__preferences.pad_tracks
         )
         
+        # Save cover to album directory
+        if self.__preferences.save_cover and album.image and album_base_directory:
+            save_cover_image(album.image, album_base_directory, "cover.jpg")
+            
         total_tracks = len(infos_dw)
-        for a in range(total_tracks):
+        for a, album_track_obj in enumerate(album_obj.tracks):
             track_number = a + 1
-            # c_infos_dw is from API_GW.get_album_data, used for SNG_ID, SNG_TITLE etc.
             c_infos_dw_item = infos_dw[a] 
             
-            # self.__song_metadata is the dict-of-lists from API.tracking_album
-            # We need to construct c_song_metadata_for_easydw for the current track 'a'
-            # by picking the ath element from each list in self.__song_metadata.
+            # Update track object with proper track position and disc number from API
+            if 'track_position' in c_infos_dw_item:
+                album_track_obj.track_number = c_infos_dw_item['track_position']
+            if 'disk_number' in c_infos_dw_item:
+                album_track_obj.disc_number = c_infos_dw_item['disk_number']
             
-            current_track_constructed_metadata = {}
-            potential_error_marker = None
-            is_current_track_error = False
-
-            # Check the 'music' field first for an error dict from API.tracking_album
-            if 'music' in self.__song_metadata and isinstance(self.__song_metadata['music'], list) and len(self.__song_metadata['music']) > a:
-                music_field_value = self.__song_metadata['music'][a]
-                if isinstance(music_field_value, dict) and 'error_type' in music_field_value:
-                    is_current_track_error = True
-                    potential_error_marker = music_field_value
-                    # The error marker dict itself will serve as the metadata for the failed track object
-                    current_track_constructed_metadata = potential_error_marker
-            
-            if not is_current_track_error:
-                # Populate current_track_constructed_metadata from self.__song_metadata lists
-                for key, value_list_template in self.__song_metadata_items: # self.__song_metadata_items is items() of dict-of-lists
-                    if isinstance(value_list_template, list): # e.g. self.__song_metadata['artist']
-                        if len(self.__song_metadata[key]) > a:
-                            current_track_constructed_metadata[key] = self.__song_metadata[key][a]
-                        else:
-                            current_track_constructed_metadata[key] = "Unknown" # Fallback if list is too short
-                    else: # Album-wide metadata (e.g. 'album', 'label')
-                        current_track_constructed_metadata[key] = self.__song_metadata[key]
+            # Ensure we have valid values, not None
+            if album_track_obj.track_number is None:
+                album_track_obj.track_number = track_number
+            if album_track_obj.disc_number is None:
+                album_track_obj.disc_number = 1
                 
-                # Ensure essential fields from c_infos_dw_item are preferred or added if missing from API.tracking_album results
-                current_track_constructed_metadata['music'] = current_track_constructed_metadata.get('music') or c_infos_dw_item.get('SNG_TITLE', 'Unknown')
-                # artist might be complex due to contributors, rely on what API.tracking_album prepared
-                # current_track_constructed_metadata['artist'] = current_track_constructed_metadata.get('artist') # Already populated or None
-                current_track_constructed_metadata['tracknum'] = current_track_constructed_metadata.get('tracknum') or f"{track_number}"
-                current_track_constructed_metadata['discnum'] = current_track_constructed_metadata.get('discnum') or f"{c_infos_dw_item.get('DISK_NUMBER', 1)}"
-                current_track_constructed_metadata['isrc'] = current_track_constructed_metadata.get('isrc') or c_infos_dw_item.get('ISRC', '')
-                current_track_constructed_metadata['duration'] = current_track_constructed_metadata.get('duration') or int(c_infos_dw_item.get('DURATION', 0))
-                current_track_constructed_metadata['explicit'] = current_track_constructed_metadata.get('explicit') or ('1' if c_infos_dw_item.get('EXPLICIT_LYRICS', '0') == '1' else '0')
-                current_track_constructed_metadata['album_artist'] = current_track_constructed_metadata.get('album_artist') or derived_album_artist_from_contributors
-
-            if is_current_track_error:
-                error_type = potential_error_marker.get('error_type', 'UnknownError')
-                error_message = potential_error_marker.get('message', 'An unknown error occurred.')
-                track_name_for_log = potential_error_marker.get('name', c_infos_dw_item.get('SNG_TITLE', f'Track {track_number}'))
-                track_id_for_log = potential_error_marker.get('ids', c_infos_dw_item.get('SNG_ID'))
-                
-                # Construct market_info string based on actual checked_markets from error dict or preferences fallback
-                checked_markets_str = ""
-                if error_type == 'MarketAvailabilityError':
-                    # Prefer checked_markets from the error dict if available
-                    if 'checked_markets' in c_infos_dw_item and c_infos_dw_item['checked_markets']:
-                        checked_markets_str = c_infos_dw_item['checked_markets']
-                    # Fallback to preferences.market if not in error dict (though it should be)
-                    elif self.__preferences.market:
-                        if isinstance(self.__preferences.market, list):
-                            checked_markets_str = ", ".join([m.upper() for m in self.__preferences.market])
-                        elif isinstance(self.__preferences.market, str):
-                            checked_markets_str = self.__preferences.market.upper()
-                market_log_info = f" (Market(s): {checked_markets_str})" if checked_markets_str else ""
-
-                logger.warning(f"Skipping download of track '{track_name_for_log}' (ID: {track_id_for_log}) in album '{album.album_name}' due to {error_type}{market_log_info}: {error_message}")
-                
-                failed_track_link = f"https://deezer.com/track/{track_id_for_log}" if track_id_for_log else self.__preferences.link # Fallback to album link
-                
-                # current_track_constructed_metadata is already the error_marker dict
-                track = Track(
-                    tags=current_track_constructed_metadata, 
-                    song_path=None, file_format=None, quality=None, 
-                    link=failed_track_link, 
-                    ids=track_id_for_log
-                )
-                track.success = False
-                track.error_message = error_message
-                tracks.append(track)
-                # Optionally, report progress for this failed track within the album context here
-                continue # to the next track in the album
-
-            # Merge album-level metadata (only add fields not already set in c_song_metadata)
-            # This was the old logic, current_track_constructed_metadata should be fairly complete now or an error dict.
-            # for key, item in self.__song_metadata_items:
-            #     if key not in current_track_constructed_metadata:
-            #         if isinstance(item, list):
-            #             current_track_constructed_metadata[key] = self.__song_metadata[key][a] if len(self.__song_metadata[key]) > a else 'Unknown'
-            #         else:
-            #             current_track_constructed_metadata[key] = self.__song_metadata[key]
-            
-            # Continue with the rest of your processing (media handling, download, etc.)
-            c_infos_dw_item['media_url'] = medias[a] # medias is from Download_JOB.check_sources(infos_dw, ...)
+            c_infos_dw_item['media_url'] = medias[a]
             c_preferences = deepcopy(self.__preferences)
-            c_preferences.song_metadata = current_track_constructed_metadata.copy()
-            c_preferences.ids = c_infos_dw_item['SNG_ID']
-            c_preferences.track_number = track_number
             
-            # Add additional information for consistent parent info
-            c_preferences.song_metadata['album_id'] = self.__ids
-            c_preferences.song_metadata['total_tracks'] = total_tracks
-            c_preferences.total_tracks = total_tracks
-            c_preferences.link = f"https://deezer.com/track/{c_preferences.ids}"
-            
-            current_track_object = None
             try:
-                # This is where EASY_DW().easy_dw() or EASY_DW().download_try() is effectively called
+                # Create full track object with album context
+                from deezspot.models.callback.track import trackObject
+                full_track_obj = trackObject(
+                    title=album_track_obj.title,
+                    disc_number=album_track_obj.disc_number,
+                    track_number=album_track_obj.track_number,
+                    duration_ms=album_track_obj.duration_ms,
+                    explicit=album_track_obj.explicit,
+                    ids=album_track_obj.ids,
+                    artists=album_track_obj.artists,
+                    album=album_obj,  # Set the parent album
+                    genres=getattr(album_track_obj, 'genres', [])
+                )
+                
+                c_preferences.song_metadata = full_track_obj
+                c_preferences.ids = full_track_obj.ids.deezer
+                c_preferences.track_number = track_number
+                c_preferences.total_tracks = total_tracks
+                c_preferences.link = f"https://deezer.com/track/{c_preferences.ids}"
+                
                 current_track_object = EASY_DW(c_infos_dw_item, c_preferences, parent='album').easy_dw()
-
-            except TrackNotFound as e_tnf:
-                logger.error(f"Track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' by '{c_preferences.song_metadata.get('artist', 'Unknown Artist')}' (Album: {album.album_name}) failed: {str(e_tnf)}")
-                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+            except Exception as e:
+                logger.error(f"Track '{album_track_obj.title}' in album '{album_obj.title}' failed: {e}")
+                # Create a simple track metadata dict manually since we don't have EASY_DW to process it
+                track_metadata = self._track_object_to_dict(album_track_obj, album_obj)
+                current_track_object = Track(track_metadata, None, None, None, c_preferences.link, c_preferences.ids)
                 current_track_object.success = False
-                current_track_object.error_message = str(e_tnf)
-            except QualityNotFound as e_qnf:
-                logger.error(f"Quality issue for track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' (Album: {album.album_name}): {str(e_qnf)}")
-                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
-                current_track_object.success = False
-                current_track_object.error_message = str(e_qnf)
-            except requests.exceptions.ConnectionError as e_conn:
-                logger.error(f"Connection error for track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' (Album: {album.album_name}): {str(e_conn)}")
-                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
-                current_track_object.success = False
-                current_track_object.error_message = str(e_conn) # Store specific connection error
-            except Exception as e_general: # Catch any other unexpected error during this track's processing
-                logger.error(f"Unexpected error for track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' (Album: {album.album_name}): {str(e_general)}")
-                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
-                current_track_object.success = False
-                current_track_object.error_message = str(e_general)
+                current_track_object.error_message = str(e)
             
             if current_track_object:
                 tracks.append(current_track_object)
-            else: # Should not happen if exceptions are caught, but as a fallback
-                logger.error(f"Track object was not created for SNG_ID {c_infos_dw_item['SNG_ID']} in album {album.album_name}. Skipping.")
-                # Create a generic failed track to ensure list length matches expectation if needed elsewhere
-                failed_placeholder = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
-                failed_placeholder.success = False
-                failed_placeholder.error_message = "Track processing failed to produce a result object."
-                tracks.append(failed_placeholder)
-
-        # Save album cover image
-        if self.__preferences.save_cover and album.image and album_base_directory:
-            save_cover_image(album.image, album_base_directory, "cover.jpg")
 
         if self.__make_zip:
             song_quality = tracks[0].quality if tracks else 'Unknown'
-            # Pass along custom directory format if set
             custom_dir_format = getattr(self.__preferences, 'custom_dir_format', None)
             zip_name = create_zip(
                 tracks,
                 output_dir=self.__output_dir,
-                song_metadata=self.__song_metadata,
+                song_metadata=album_dict,
                 song_quality=song_quality,
                 custom_dir_format=custom_dir_format
             )
             album.zip_path = zip_name
 
-        # Report album done status
-        album_name = self.__song_metadata.get('album', 'Unknown Album')
-        total_tracks = self.__song_metadata.get('nb_tracks', 0)
+        successful_tracks_cb = []
+        failed_tracks_cb = []
+        skipped_tracks_cb = []
         
-        successful_tracks = []
-        failed_tracks = []
-        skipped_tracks = []
-        for track in tracks:
-            track_info = {
-                "name": track.tags.get('music') or track.tags.get('name', 'Unknown Track'),
-                "artist": track.tags.get('artist', 'Unknown Artist')
-            }
+        for track, track_obj in zip(tracks, album_obj.tracks):
             if getattr(track, 'was_skipped', False):
-                skipped_tracks.append(track_info)
+                skipped_tracks_cb.append(track_obj)
             elif track.success:
-                successful_tracks.append(track_info)
+                successful_tracks_cb.append(track_obj)
             else:
-                track_info["reason"] = getattr(track, 'error_message', 'Unknown reason')
-                failed_tracks.append(track_info)
+                failed_tracks_cb.append(failedTrackObject(
+                    track=track_obj,
+                    reason=getattr(track, 'error_message', 'Unknown reason')
+                ))
 
+        summary_obj = summaryObject(
+            successful_tracks=successful_tracks_cb,
+            skipped_tracks=skipped_tracks_cb,
+            failed_tracks=failed_tracks_cb,
+            total_successful=len(successful_tracks_cb),
+            total_skipped=len(skipped_tracks_cb),
+            total_failed=len(failed_tracks_cb)
+        )
+        
+        status_obj_done = doneObject(ids=album_obj.ids, summary=summary_obj)
+        callback_obj_done = albumCallbackObject(album=album_obj, status_info=status_obj_done)
         report_progress(
             reporter=Download_JOB.progress_reporter,
-            report_type="album",
-            artist=derived_album_artist_from_contributors,
-            status="done",
-            total_tracks=total_tracks,
-            title=album_name,
-            url=album_link_for_report, # Use the actual album link
-            summary={
-                "successful_tracks": [f"{t['name']} - {t['artist']}" for t in successful_tracks],
-                "skipped_tracks": [f"{t['name']} - {t['artist']}" for t in skipped_tracks],
-                "failed_tracks": [{
-                    "track": f"{t['name']} - {t['artist']}",
-                    "reason": t['reason']
-                } for t in failed_tracks],
-                "total_successful": len(successful_tracks),
-                "total_skipped": len(skipped_tracks),
-                "total_failed": len(failed_tracks)
-            }
+            callback_obj=callback_obj_done
         )
         
         return album
@@ -1343,216 +1237,136 @@ class DW_PLAYLIST:
         self.__song_metadata = self.__preferences.song_metadata
         self.__quality_download = self.__preferences.quality_download
 
+    def _track_object_to_dict(self, track_obj: any) -> dict:
+        return {
+            "music": track_obj.title,
+            "artist": "; ".join([artist.name for artist in track_obj.artists]),
+            "album": track_obj.album.title,
+            "tracknum": 0,
+            "discnum": 0,
+            "duration": track_obj.duration_ms // 1000 if track_obj.duration_ms else 0,
+            "year": 0,
+            "explicit": False,
+            "isrc": track_obj.ids.isrc if hasattr(track_obj.ids, 'isrc') else None,
+            "album_artist": "",
+            "upc": None,
+            "label": "",
+            "genre": "",
+            "image": None,
+        }
+
     def dw(self) -> Playlist:
-        # Extract playlist metadata for reporting
-        playlist_name = self.__json_data.get('title', 'Unknown Playlist')
-        playlist_owner = self.__json_data.get('creator', {}).get('name', 'Unknown Owner')
-        total_tracks = self.__json_data.get('nb_tracks', 0)
+        playlist_obj: playlistCbObject = self.__preferences.json_data
         
-        # Report playlist initializing status
+        status_obj_init = initializingObject(ids=playlist_obj.ids)
+        callback_obj_init = playlistCallbackObject(playlist=playlist_obj, status_info=status_obj_init)
         report_progress(
             reporter=Download_JOB.progress_reporter,
-            report_type="playlist",
-            owner=playlist_owner,
-            status="initializing",
-            total_tracks=total_tracks,
-            name=playlist_name,
-            url=f"https://deezer.com/playlist/{self.__ids}"
+            callback_obj=callback_obj_init
         )
         
-        # Retrieve playlist data from API
         infos_dw = API_GW.get_playlist_data(self.__ids)['data']
+        playlist_name_sanitized = sanitize_name(playlist_obj.title)
         
-        # Extract playlist metadata - we'll use this in the track-level reporting
-        playlist_name_sanitized = sanitize_name(self.__json_data['title'])
-        total_tracks = len(infos_dw)
-
         playlist = Playlist()
         tracks = playlist.tracks
 
-        # --- Prepare the m3u playlist file ---
-        # m3u file will be placed in output_dir/playlists
         playlist_m3u_dir = os.path.join(self.__output_dir, "playlists")
         os.makedirs(playlist_m3u_dir, exist_ok=True)
         m3u_path = os.path.join(playlist_m3u_dir, f"{playlist_name_sanitized}.m3u")
         if not os.path.exists(m3u_path):
             with open(m3u_path, "w", encoding="utf-8") as m3u_file:
                 m3u_file.write("#EXTM3U\n")
-        # -------------------------------------
 
-        # Get media URLs for each track in the playlist
-        medias = Download_JOB.check_sources(
-            infos_dw, self.__quality_download
-        )
+        medias = Download_JOB.check_sources(infos_dw, self.__quality_download)
 
-        # Process each track
-        for idx, (c_infos_dw_item, c_media, c_song_metadata_item) in enumerate(zip(infos_dw, medias, self.__song_metadata), 1):
+        successful_tracks_cb = []
+        failed_tracks_cb = []
+        skipped_tracks_cb = []
+        
+        total_tracks = len(infos_dw)
 
-            # Skip if song metadata indicates an error (e.g., from market availability or NoDataApi)
-            if isinstance(c_song_metadata_item, dict) and 'error_type' in c_song_metadata_item:
-                track_name = c_song_metadata_item.get('name', 'Unknown Track')
-                track_ids = c_song_metadata_item.get('ids')
-                error_message = c_song_metadata_item.get('message', 'Unknown error.')
-                error_type = c_song_metadata_item.get('error_type', 'UnknownError')
-                # market_info = f" (Market: {self.__preferences.market})" if self.__preferences.market and error_type == 'MarketAvailabilityError' else ""
-                # Construct market_info string based on actual checked_markets from error dict or preferences fallback
-                checked_markets_str = ""
-                if error_type == 'MarketAvailabilityError':
-                    # Prefer checked_markets from the error dict if available
-                    if 'checked_markets' in c_song_metadata_item and c_song_metadata_item['checked_markets']:
-                        checked_markets_str = c_song_metadata_item['checked_markets']
-                    # Fallback to preferences.market if not in error dict (though it should be)
-                    elif self.__preferences.market:
-                        if isinstance(self.__preferences.market, list):
-                            checked_markets_str = ", ".join([m.upper() for m in self.__preferences.market])
-                        elif isinstance(self.__preferences.market, str):
-                            checked_markets_str = self.__preferences.market.upper()
-                market_log_info = f" (Market(s): {checked_markets_str})" if checked_markets_str else ""
+        for idx in range(total_tracks):
+            c_infos_dw_item = infos_dw[idx]
+            c_media = medias[idx]
+            c_track_obj = playlist_obj.tracks[idx] if idx < len(playlist_obj.tracks) else None
 
-                logger.warning(f"Skipping download for track '{track_name}' (ID: {track_ids}) from playlist '{playlist_name_sanitized}' due to {error_type}{market_log_info}: {error_message}")
+
+            if not c_track_obj or not c_track_obj.ids or not c_track_obj.ids.deezer:
+                logger.warning(f"Skipping item {idx + 1} in playlist '{playlist_obj.title}' as it's not a valid track object.")
+                from deezspot.models.callback.track import trackObject as trackCbObject
+                unknown_track = trackCbObject(title="Unknown Skipped Item")
+                reason = "Playlist item was not a valid track object."
                 
-                failed_track_link = f"https://deezer.com/track/{track_ids}" if track_ids else self.__preferences.link # Fallback to playlist link
-                                
-                # c_song_metadata_item is the error dict, use it as tags for the Track object
-                track = Track(
-                    tags=c_song_metadata_item, 
-                    song_path=None, file_format=None, quality=None, 
-                    link=failed_track_link, 
-                    ids=track_ids
+                failed_tracks_cb.append(failedTrackObject(track=unknown_track, reason=reason))
+                
+                failed_track_model = Track(
+                    tags={'music': 'Unknown Skipped Item', 'artist': 'Unknown'},
+                    song_path=None, file_format=None, quality=None, link=None, ids=None
                 )
-                track.success = False
-                track.error_message = error_message
-                tracks.append(track)
-                # Optionally, report progress for this failed track within the playlist context here
-                continue # Move to the next track in the playlist
-
-            # Original check for string type, should be less common if API returns dicts for errors
-            if type(c_song_metadata_item) is str: 
-                logger.warning(f"Track metadata is a string for a track in playlist '{playlist_name_sanitized}': '{c_song_metadata_item}'. Skipping.")
-                # Create a basic failed track object if metadata is just a string error
-                # This is a fallback, ideally c_song_metadata_item would be an error dict
-                error_placeholder_tags = {'name': 'Unknown Track (metadata error)', 'artist': 'Unknown Artist', 'error_type': 'StringError', 'message': c_song_metadata_item}
-                track = Track(
-                    tags=error_placeholder_tags,
-                    song_path=None, file_format=None, quality=None,
-                    link=self.__preferences.link, # Playlist link
-                    ids=None # No specific ID available from string error
-                )
-                track.success = False
-                track.error_message = c_song_metadata_item
-                tracks.append(track)
+                failed_track_model.success = False
+                failed_track_model.error_message = reason
+                tracks.append(failed_track_model)
                 continue
 
             c_infos_dw_item['media_url'] = c_media
             c_preferences = deepcopy(self.__preferences)
-            c_preferences.ids = c_infos_dw_item['SNG_ID']
-            c_preferences.song_metadata = c_song_metadata_item # This is the full metadata dict for a successful track
-            c_preferences.track_number = idx
+            c_preferences.ids = c_track_obj.ids.deezer
+            c_preferences.song_metadata = c_track_obj
+            c_preferences.track_number = idx + 1
             c_preferences.total_tracks = total_tracks
-            c_preferences.json_data = self.__json_data
+            c_preferences.json_data = self.__preferences.json_data
             c_preferences.link = f"https://deezer.com/track/{c_preferences.ids}"
 
-            # Download the track using the EASY_DW downloader
-            # Wrap this in a try-except block to handle individual track failures
             current_track_object = None
             try:
                 current_track_object = EASY_DW(c_infos_dw_item, c_preferences, parent='playlist').easy_dw()
-            except TrackNotFound as e_tnf:
-                logger.error(f"Track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' by '{c_preferences.song_metadata.get('artist', 'Unknown Artist')}' (Playlist: {playlist_name_sanitized}) failed: {str(e_tnf)}")
-                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
+                
+                if getattr(current_track_object, 'was_skipped', False):
+                    skipped_tracks_cb.append(c_track_obj)
+                elif current_track_object.success:
+                    successful_tracks_cb.append(c_track_obj)
+                else:
+                    failed_tracks_cb.append(failedTrackObject(
+                        track=c_track_obj,
+                        reason=getattr(current_track_object, 'error_message', 'Unknown reason')
+                    ))
+            except Exception as e:
+                logger.error(f"Track '{c_track_obj.title}' in playlist '{playlist_obj.title}' failed: {e}")
+                failed_tracks_cb.append(failedTrackObject(track=c_track_obj, reason=str(e)))
+                current_track_object = Track(self._track_object_to_dict(c_track_obj), None, None, None, c_preferences.link, c_preferences.ids)
                 current_track_object.success = False
-                current_track_object.error_message = str(e_tnf)
-            except QualityNotFound as e_qnf:
-                logger.error(f"Quality issue for track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' (Playlist: {playlist_name_sanitized}): {str(e_qnf)}")
-                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
-                current_track_object.success = False
-                current_track_object.error_message = str(e_qnf)
-            except requests.exceptions.ConnectionError as e_conn: # Catch connection errors specifically
-                logger.error(f"Connection error for track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' (Playlist: {playlist_name_sanitized}): {str(e_conn)}")
-                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
-                current_track_object.success = False
-                current_track_object.error_message = str(e_conn) # Store specific connection error
-            except Exception as e_general: # Catch any other unexpected error during this track's processing
-                logger.error(f"Unexpected error for track '{c_preferences.song_metadata.get('music', 'Unknown Track')}' (Playlist: {playlist_name_sanitized}): {str(e_general)}")
-                current_track_object = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
-                current_track_object.success = False
-                current_track_object.error_message = str(e_general)
+                current_track_object.error_message = str(e)
 
-            # Track-level progress reporting is handled in EASY_DW
-            if current_track_object: # Ensure a track object was created
+            if current_track_object:
                 tracks.append(current_track_object)
-                # Only log a warning if the track failed and was NOT intentionally skipped
-                if not current_track_object.success and not getattr(current_track_object, 'was_skipped', False):
-                    # The error logging is now done within the except blocks above, more specifically.
-                    pass # logger.warning(f"Cannot download '{song}'. Reason: {error_detail} (Link: {track.link or c_preferences.link})")
-            else:
-                 # This case should ideally not be reached if exceptions are handled correctly.
-                logger.error(f"Track object was not created for SNG_ID {c_infos_dw_item['SNG_ID']} in playlist {playlist_name_sanitized}. Skipping.")
-                # Create a generic failed track to ensure list length matches expectation if needed elsewhere
-                failed_placeholder = Track(c_preferences.song_metadata, None, None, None, c_preferences.link, c_preferences.ids)
-                failed_placeholder.success = False
-                failed_placeholder.error_message = "Track processing failed to produce a result object."
-                tracks.append(failed_placeholder)
-
-            # --- Append the final track path to the m3u file ---
-            # Build a relative path from the playlists directory
-            if current_track_object and current_track_object.success and hasattr(current_track_object, 'song_path') and current_track_object.song_path:
-                relative_song_path = os.path.relpath(
-                    current_track_object.song_path,
-                    start=os.path.join(self.__output_dir, "playlists")
-                )
-                with open(m3u_path, "a", encoding="utf-8") as m3u_file:
-                    m3u_file.write(f"{relative_song_path}\n")
-            # --------------------------------------------------
+                if current_track_object.success and hasattr(current_track_object, 'song_path') and current_track_object.song_path:
+                    relative_song_path = os.path.relpath(
+                        current_track_object.song_path,
+                            start=playlist_m3u_dir
+                    )
+                    with open(m3u_path, "a", encoding="utf-8") as m3u_file:
+                        m3u_file.write(f"{relative_song_path}\n")
 
         if self.__make_zip:
-            playlist_title = self.__json_data['title']
-            zip_name = f"{self.__output_dir}/{playlist_title} [playlist {self.__ids}]"
+            zip_name = f"{self.__output_dir}/{playlist_obj.title} [playlist {self.__ids}]"
             create_zip(tracks, zip_name=zip_name)
             playlist.zip_path = zip_name
 
-        # Report playlist done status
-        playlist_name = self.__json_data.get('title', 'Unknown Playlist')
-        playlist_owner = self.__json_data.get('creator', {}).get('name', 'Unknown Owner')
-        total_tracks = self.__json_data.get('nb_tracks', 0)
+        summary_obj = summaryObject(
+            successful_tracks=successful_tracks_cb,
+            skipped_tracks=skipped_tracks_cb,
+            failed_tracks=failed_tracks_cb,
+            total_successful=len(successful_tracks_cb),
+            total_skipped=len(skipped_tracks_cb),
+            total_failed=len(failed_tracks_cb)
+        )
         
-        successful_tracks = []
-        failed_tracks = []
-        skipped_tracks = []
-        for track in tracks:
-            track_name = track.tags.get('music') or track.tags.get('name', 'Unknown Track')
-            artist_name = track.tags.get('artist', 'Unknown Artist')
-            track_info = {
-                "name": track_name,
-                "artist": artist_name
-            }
-            if getattr(track, 'was_skipped', False):
-                skipped_tracks.append(track_info)
-            elif track.success:
-                successful_tracks.append(track_info)
-            else:
-                track_info["reason"] = getattr(track, 'error_message', 'Unknown reason')
-                failed_tracks.append(track_info)
-
+        status_obj_done = doneObject(ids=playlist_obj.ids, summary=summary_obj)
+        callback_obj_done = playlistCallbackObject(playlist=playlist_obj, status_info=status_obj_done)
         report_progress(
             reporter=Download_JOB.progress_reporter,
-            report_type="playlist",
-            owner=playlist_owner,
-            status="done",
-            total_tracks=total_tracks,
-            name=playlist_name,
-            url=f"https://deezer.com/playlist/{self.__ids}",
-            summary={
-                "successful_tracks": [f"{t['name']} - {t['artist']}" for t in successful_tracks],
-                "skipped_tracks": [f"{t['name']} - {t['artist']}" for t in skipped_tracks],
-                "failed_tracks": [{
-                    "track": f"{t['name']} - {t['artist']}",
-                    "reason": t['reason']
-                } for t in failed_tracks],
-                "total_successful": len(successful_tracks),
-                "total_skipped": len(skipped_tracks),
-                "total_failed": len(failed_tracks)
-            }
+            callback_obj=callback_obj_done
         )
         
         return playlist
