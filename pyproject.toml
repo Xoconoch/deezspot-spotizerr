@@ -30,11 +30,5 @@ Homepage = "https://github.com/Xoconoch/deezspot-spotizerr"
 Repository = "https://github.com/Xoconoch/deezspot-spotizerr.git"
 Documentation = "https://github.com/Xoconoch/deezspot-spotizerr/blob/main/README.md"
 
-[tool.setuptools]
-packages = [
-    "deezspot",
-    "deezspot.models",
-    "deezspot.spotloader", 
-    "deezspot.deezloader",
-    "deezspot.libutils"
-]
+[tool.setuptools.packages.find]
+include = ["deezspot", "deezspot.*"]

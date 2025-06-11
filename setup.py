@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 README = open("README.md", "r")
 readmed = README.read()
@@ -16,13 +16,7 @@ setup(
 	author_email = "farihmuhammad75@gmail.com",
 	url = "https://github.com/jakiepari/deezspot",
 
-	packages = [
-		"deezspot",
-		"deezspot.models",
-		"deezspot.spotloader",
-		"deezspot.deezloader",
-		"deezspot.libutils"
-	],
+	packages = find_packages(include=["deezspot", "deezspot.*"]),
 
         install_requires = [
                 "mutagen", "pycryptodome", "requests",
