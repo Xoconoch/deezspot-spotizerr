@@ -33,7 +33,6 @@ class trackAlbumObject:
     genres: List[str] = field(default_factory=list)
     ids: IDs = field(default_factory=IDs)
     artists: List[artistTrackAlbumObject] = field(default_factory=list)
-    explicit: bool = False
 
 
 @dataclass
