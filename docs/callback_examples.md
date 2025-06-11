@@ -8,7 +8,7 @@ The data models in `deezspot/models/callback/` follow a specific naming conventi
 
 For example:
 
-*   `playlistTrackObject`: This represents a `playlist` object within a `track` reporting context. It's a simplified version of a full `playlistObject` and is used as the parent for a track being processed as part of a playlist operation.
+*   `playlistTrackObject`: This represents a `playlist` object within a `track` reporting context. It's a simplified version of a full `playlistObject` and is used as the parent for a track being processed as part of a playlist operation (more on what a "parent" is later).
 *   `artistAlbumTrackPlaylistObject`: This represents an `artist` object, nested within an `album` object, which is inside a `track` object that is part of a `playlist`. This shows the full hierarchy of contexts.
 
 ## `trackCallbackObject` Examples
