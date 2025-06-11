@@ -4,8 +4,14 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 
 from .common import IDs
-from .artist import artistObject
+from .user import userObject
 
+@dataclass
+class artistAlbumTrackPlaylistObject:
+    """Artist when nested inside a track in a playlist context."""
+    type: str = "artistAlbumTrackPlaylist"
+    name: str = ""
+    ids: IDs = field(default_factory=IDs)
 
 @dataclass
 class albumTrackPlaylistObject:
@@ -15,6 +21,7 @@ class albumTrackPlaylistObject:
     title: str = ""
     release_date: Dict[str, Any] = field(default_factory=dict)  # ReleaseDate as dict
     ids: IDs = field(default_factory=IDs)
+    artists: List[artistAlbumTrackPlaylistObject] = field(default_factory=list)
 
 
 @dataclass
@@ -22,7 +29,6 @@ class artistTrackPlaylistObject:
     """Artist when nested inside a track in a playlist context."""
     type: str = "artistTrackPlaylist"
     name: str = ""
-    genres: List[str] = field(default_factory=list)
     ids: IDs = field(default_factory=IDs)
 
 
@@ -33,10 +39,11 @@ class trackPlaylistObject:
     title: str = ""
     position: int = 0  # Position in the playlist
     duration_ms: int = 0  # mandatory
-    # Nested objects instead of string references
-    artist: artistTrackPlaylistObject = field(default_factory=artistTrackPlaylistObject)
+    artists: List[artistTrackPlaylistObject] = field(default_factory=list)
     album: albumTrackPlaylistObject = field(default_factory=albumTrackPlaylistObject)
     ids: IDs = field(default_factory=IDs)
+    disc_number: int = 1
+    track_number: int = 1
 
 
 @dataclass
@@ -45,7 +52,6 @@ class playlistObject:
     type: str = "playlist"
     title: str = ""
     description: Optional[str] = None
-    collaborative: bool = False
-    owner: artistObject = field(default_factory=artistObject)
+    owner: userObject = field(default_factory=userObject)
     tracks: List[trackPlaylistObject] = field(default_factory=list)
     ids: IDs = field(default_factory=IDs) 

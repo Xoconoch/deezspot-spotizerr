@@ -17,7 +17,7 @@ from deezspot.exceptions import (
     NoRightOnMedia,
     QualityNotFound,
 )
-from deezspot.models import (
+from deezspot.models.download import (
     Track,
     Album,
     Playlist,

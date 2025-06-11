@@ -9,7 +9,7 @@ from deezspot.libutils.logging_utils import configure_logger, logger
 
 # Export key functionality
 from deezspot.deezloader import DeeLogin
-from deezspot.models import Track, Album, Playlist, Smart, Episode
+from deezspot.models.download import Track, Album, Playlist, Smart, Episode
 
 __version__ = "1.2.0"
 

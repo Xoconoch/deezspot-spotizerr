@@ -1,12 +1,48 @@
 #!/usr/bin/python3
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from .common import IDs
-from .album import albumTrackObject
-from .artist import artistTrackObject
+from .user import userObject
 
+@dataclass
+class artistAlbumTrackObject:
+    """Artist when nested inside a track in an album context."""
+    type: str = "artistAlbumTrack"
+    name: str = ""
+    ids: IDs = field(default_factory=IDs) 
+
+@dataclass
+class artistTrackObject:
+    """
+    An artist when nested inside a track context.
+    No genres, no albums—just identifying info.
+    """
+    type: str = "artistTrack"
+    name: str = ""
+    ids: IDs = field(default_factory=IDs)
+
+@dataclass
+class albumTrackObject:
+    """Album when nested inside a track context."""
+    type: str = "albumTrack"
+    album_type: str = ""  # "album" | "single" | "compilation"
+    title: str = ""
+    release_date: Dict[str, Any] = field(default_factory=dict)  # ReleaseDate as dict
+    total_tracks: int = 0
+    genres: List[str] = field(default_factory=list)
+    ids: IDs = field(default_factory=IDs)
+    artists: List[artistAlbumTrackObject] = field(default_factory=list)
+
+@dataclass
+class playlistTrackObject:
+    """Playlist when nested inside a track context."""
+    type: str = "playlistTrack"
+    title: str = ""
+    description: Optional[str] = None
+    owner: userObject = field(default_factory=userObject)
+    ids: IDs = field(default_factory=IDs)
 
 @dataclass
 class trackObject:
@@ -17,11 +53,6 @@ class trackObject:
     track_number: int = 1
     duration_ms: int = 0  # mandatory
     genres: List[str] = field(default_factory=list)
-    
-    # Nested album summary
     album: albumTrackObject = field(default_factory=albumTrackObject)
-    
-    # Nested lean artist summary (no genres/albums)
-    artist: artistTrackObject = field(default_factory=artistTrackObject)
-    
-    ids: IDs = field(default_factory=IDs) 
+    artists: List[artistTrackObject] = field(default_factory=list)
+    ids: IDs = field(default_factory=IDs)

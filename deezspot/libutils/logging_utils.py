@@ -5,6 +5,25 @@ import sys
 from typing import Optional, Callable, Dict, Any, Union
 import json
 
+from deezspot.models.callback.callbacks import (
+    BaseStatusObject, 
+    initializingObject, 
+    skippedObject, 
+    retryingObject, 
+    realTimeObject, 
+    errorObject, 
+    doneObject,
+    summaryObject,
+    failedTrackObject,
+    trackCallbackObject, 
+    albumCallbackObject, 
+    playlistCallbackObject
+)
+from deezspot.models.callback.track import trackObject, albumTrackObject, playlistTrackObject, artistTrackObject
+from deezspot.models.callback.album import albumObject
+from deezspot.models.callback.playlist import playlistObject
+from deezspot.models.callback.user import userObject
+
 # Create the main library logger
 logger = logging.getLogger('deezspot')
 
@@ -88,7 +107,7 @@ class ProgressReporter:
 #
 # [ Type: "track" ]
 #   - song: (str) The name of the track.
-#   - artist: (str) The artist of the track.
+#   - artists: (str) The artist of the track.
 #   - album: (str, optional) The album of the track.
 #   - parent: (dict, optional) Information about the container (album/playlist).
 #     { "type": "album"|"playlist", "name": str, "owner": str, "artist": str, ... }
@@ -132,82 +151,21 @@ class ProgressReporter:
 
 def report_progress(
     reporter: Optional["ProgressReporter"],
-    report_type: str,
-    status: str,
-    song: Optional[str] = None,
-    artist: Optional[str] = None,
-    album: Optional[str] = None,
-    url: Optional[str] = None,
-    convert_to: Optional[str] = None,
-    bitrate: Optional[str] = None,
-    parent: Optional[Dict[str, Any]] = None,
-    current_track: Optional[int] = None,
-    total_tracks: Optional[Union[int, str]] = None,
-    reason: Optional[str] = None,
-    summary: Optional[Dict[str, Any]] = None,
-    error: Optional[str] = None,
-    retry_count: Optional[int] = None,
-    seconds_left: Optional[int] = None,
-    time_elapsed: Optional[int] = None,
-    progress: Optional[int] = None,
-    owner: Optional[str] = None,
-    name: Optional[str] = None,
-    title: Optional[str] = None,
+    callback_obj: Union[trackCallbackObject, albumCallbackObject, playlistCallbackObject]
 ):
-    """Builds and reports a standardized progress dictionary after validating the input."""
+    """
+    Reports progress using a standardized callback object.
     
-    # --- Input Validation ---
-    # Enforce the standardized format to ensure consistent reporting.
-    if report_type == "track":
-        if not all([song, artist]):
-            raise ValueError("For report_type 'track', 'song' and 'artist' parameters are required.")
-        if status == "skipped" and reason is None:
-            raise ValueError("For a 'skipped' track, a 'reason' is required.")
-        if status == "retrying" and not all(p is not None for p in [retry_count, seconds_left, error]):
-            raise ValueError("For a 'retrying' track, 'retry_count', 'seconds_left', and 'error' are required.")
-        if status == "real-time" and not all(p is not None for p in [time_elapsed, progress]):
-            raise ValueError("For a 'real-time' track, 'time_elapsed' and 'progress' are required.")
-        if status == "error" and error is None:
-            raise ValueError("For an 'error' track, an 'error' message is required.")
-
-    elif report_type == "album":
-        if not all(p is not None for p in [title, artist, total_tracks]):
-             raise ValueError("For report_type 'album', 'title', 'artist', and 'total_tracks' are required.")
-        if status == "done" and summary is None:
-            raise ValueError("For an 'album' with status 'done', a 'summary' is required.")
-
-    elif report_type == "playlist":
-        if not all(p is not None for p in [name, owner, total_tracks]):
-            raise ValueError("For report_type 'playlist', 'name', 'owner', and 'total_tracks' are required.")
-        if status == "done" and summary is None:
-            raise ValueError("For a 'playlist' with status 'done', a 'summary' is required.")
-
-    elif report_type == "episode":
-        if not all([song, artist]): # song=episode_title, artist=show_name
-            raise ValueError("For report_type 'episode', 'song' and 'artist' parameters are required.")
-        if status == "retrying" and not all(p is not None for p in [retry_count, seconds_left, error]):
-            raise ValueError("For a 'retrying' episode, 'retry_count', 'seconds_left', and 'error' are required.")
-        if status == "error" and error is None:
-            raise ValueError("For an 'error' episode, an 'error' message is required.")
-
-    # --- Report Building ---
-    report = {"type": report_type, "status": status}
+    Args:
+        reporter: The ProgressReporter to use for reporting
+        callback_obj: A callback object of type trackCallbackObject, albumCallbackObject, or playlistCallbackObject
+    """
+    # Validate the callback object type
+    if not isinstance(callback_obj, (trackCallbackObject, albumCallbackObject, playlistCallbackObject)):
+        raise TypeError(f"callback_obj must be of type trackCallbackObject, albumCallbackObject, or playlistCallbackObject, got {type(callback_obj)}")
     
-    data_fields = {
-        "song": song, "artist": artist, "album": album, "url": url,
-        "convert_to": convert_to, "bitrate": bitrate, "parent": parent,
-        "current_track": current_track, "total_tracks": total_tracks,
-        "reason": reason, "summary": summary, "error": error,
-        "retry_count": retry_count, "seconds_left": seconds_left,
-        "time_elapsed": time_elapsed, "progress": progress,
-        "owner": owner, "name": name, "title": title
-    }
-
-    for key, value in data_fields.items():
-        if value is not None:
-            report[key] = value
-
+    # Convert the callback object to a dictionary and report it
     if reporter:
-        reporter.report(report)
+        reporter.report(callback_obj.__dict__)
     else:
-        logger.info(json.dumps(report)) 
+        logger.info(json.dumps(callback_obj.__dict__)) 

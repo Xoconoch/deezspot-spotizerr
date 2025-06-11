@@ -10,3 +10,5 @@ deezspot/__pycache__
 deezspot/deezloader/__pycache__
 deezspot/libutils/__pycache__
 Test.py
+deezspot/models/callback/__pycache__/
+deezspot/models/download/__pycache__/
