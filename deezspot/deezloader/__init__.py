@@ -796,16 +796,8 @@ class DeeLogin:
         callback_obj_done = playlistCallbackObject(playlist=playlist_obj, status_info=status_obj_done)
         report_progress(reporter=self.progress_reporter, callback_obj=callback_obj_done)
 
-        playlist_m3u_dir = os.path.join(output_dir, "playlists")
-        os.makedirs(playlist_m3u_dir, exist_ok=True)
-        m3u_path = os.path.join(playlist_m3u_dir, f"{sanitize_name(playlist_obj.title)}.m3u")
-        with open(m3u_path, "w", encoding="utf-8") as m3u_file:
-            m3u_file.write("#EXTM3U\n")
-            for track in tracks:
-                if isinstance(track, Track) and track.success and hasattr(track, 'song_path') and track.song_path:
-                    relative_song_path = os.path.relpath(track.song_path, start=playlist_m3u_dir)
-                    m3u_file.write(f"{relative_song_path}\n")
-        logger.info(f"Created m3u playlist file at: {m3u_path}")
+        from deezspot.libutils.write_m3u import write_tracks_to_m3u
+        m3u_path = write_tracks_to_m3u(output_dir, playlist_obj.title, tracks)
 
         if make_zip:
             zip_name = f"{output_dir}/playlist_{sanitize_name(playlist_obj.title)}.zip"

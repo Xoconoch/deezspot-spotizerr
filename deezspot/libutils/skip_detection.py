@@ -4,6 +4,7 @@ import os
 from mutagen import File
 from mutagen.easyid3 import EasyID3
 from mutagen.oggvorbis import OggVorbis
+from mutagen.oggopus import OggOpus
 from mutagen.flac import FLAC
 from mutagen.mp3 import MP3 # Added for explicit MP3 type checking
 # from mutagen.mp4 import MP4 # MP4 is usually handled by File for .m4a
@@ -51,6 +52,9 @@ def read_metadata_from_file(file_path, logger):
                 logger.debug(f"No tags found in MP3 file: {file_path}")
         elif isinstance(audio, OggVorbis): # OGG
             title = audio.get('TITLE', [None])[0] # Vorbis tags are case-insensitive but typically uppercase
+            album = audio.get('ALBUM', [None])[0]
+        elif isinstance(audio, OggOpus): # OPUS
+            title = audio.get('TITLE', [None])[0] # Opus files use Vorbis comments, similar to OGG
             album = audio.get('ALBUM', [None])[0]
         elif isinstance(audio, FLAC): # FLAC
             title = audio.get('TITLE', [None])[0]

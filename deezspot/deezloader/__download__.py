@@ -37,6 +37,17 @@ from deezspot.libutils.utils import (
     save_cover_image,
     __get_dir as get_album_directory,
 )
+from deezspot.libutils.write_m3u import create_m3u_file, append_track_to_m3u
+from deezspot.libutils.metadata_converter import track_object_to_dict, album_object_to_dict
+from deezspot.libutils.progress_reporter import (
+    report_track_initializing, report_track_skipped, report_track_retrying,
+    report_track_realtime_progress, report_track_error, report_track_done,
+    report_album_initializing, report_album_done, report_playlist_initializing, report_playlist_done
+)
+from deezspot.libutils.taggers import (
+    enhance_metadata_with_image, add_deezer_enhanced_metadata, process_and_tag_track,
+    save_cover_image_for_track
+)
 from mutagen.flac import FLAC
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3
@@ -65,76 +76,21 @@ from deezspot.models.callback.playlist import playlistObject as playlistCbObject
 from deezspot.models.callback.common import IDs
 from deezspot.models.callback.user import userObject
 
+# Use unified metadata converter
 def _track_object_to_dict(track_obj: trackCbObject) -> dict:
     """
     Convert a track object to a dictionary format for tagging.
     Similar to spotloader's approach for consistent metadata handling.
     """
-    if not track_obj:
-        return {}
-    
-    tags = {}
-    
-    # Track details
-    tags['music'] = track_obj.title
-    tags['tracknum'] = track_obj.track_number if track_obj.track_number is not None else 0
-    tags['discnum'] = track_obj.disc_number if track_obj.disc_number is not None else 1
-    tags['duration'] = track_obj.duration_ms // 1000 if track_obj.duration_ms else 0
-    tags['explicit'] = track_obj.explicit
-    if track_obj.ids:
-        tags['ids'] = track_obj.ids.deezer
-        tags['isrc'] = track_obj.ids.isrc
-        
-    tags['artist'] = "; ".join([artist.name for artist in track_obj.artists])
+    return track_object_to_dict(track_obj, source_type='deezer')
 
-    # Album details
-    if track_obj.album:
-        album = track_obj.album
-        tags['album'] = album.title
-        tags['ar_album'] = "; ".join([artist.name for artist in album.artists])
-        tags['nb_tracks'] = album.total_tracks
-        if album.release_date:
-            tags['year'] = album.release_date.get('year', 0)
-            
-        if album.ids:
-            tags['upc'] = album.ids.upc
-            tags['album_id'] = album.ids.deezer
-        
-        tags['genre'] = "; ".join(album.genres) if album.genres else ""
-        
-        # Extract image information if available
-        if hasattr(album, 'images') and album.images:
-            tags['image'] = album.images
-
-    return tags
-
+# Use unified metadata converter  
 def _album_object_to_dict(album_obj: albumCbObject) -> dict:
     """
     Convert an album object to a dictionary format for tagging.
     Similar to spotloader's approach for consistent metadata handling.
     """
-    if not album_obj:
-        return {}
-        
-    tags = {}
-
-    # Album details
-    tags['album'] = album_obj.title
-    tags['ar_album'] = "; ".join([artist.name for artist in album_obj.artists])
-    tags['nb_tracks'] = album_obj.total_tracks
-    if album_obj.release_date:
-        tags['year'] = album_obj.release_date.get('year', 0)
-
-    if album_obj.ids:
-        tags['upc'] = album_obj.ids.upc
-        tags['album_id'] = album_obj.ids.deezer
-    
-    if hasattr(album_obj, 'images') and album_obj.images:
-        tags['image'] = album_obj.images
-        
-    tags['genre'] = "; ".join(album_obj.genres) if album_obj.genres else ""
-        
-    return tags
+    return album_object_to_dict(album_obj, source_type='deezer')
 
 class Download_JOB:
     progress_reporter = None
@@ -367,18 +323,9 @@ class EASY_DW:
         expected by legacy tagging and path functions.
         It intelligently finds the album information based on the download context.
         """
-        # Use the new global helper function for basic conversion
-        metadata_dict = _track_object_to_dict(track_obj)
+        # Use the unified metadata converter
+        metadata_dict = track_object_to_dict(track_obj, source_type='deezer')
         
-        # Add Deezer-specific metadata handling that isn't in the basic helper
-        
-        # For full album downloads, use complete album data from preferences if available
-        if self.__parent == 'album' and hasattr(self.__preferences, 'json_data'):
-            album_data_source = self.__preferences.json_data
-            # Update album-related fields with more complete information
-            if hasattr(album_data_source, 'label'):
-                metadata_dict['label'] = album_data_source.label
-                
         # Check for track_position and disk_number in the original API data
         # These might be directly available in the infos_dw dictionary for Deezer tracks
         if self.__infos_dw:
@@ -386,13 +333,6 @@ class EASY_DW:
                 metadata_dict['tracknum'] = self.__infos_dw['track_position']
             if 'disk_number' in self.__infos_dw:
                 metadata_dict['discnum'] = self.__infos_dw['disk_number']
-            
-            # Check for contributors from original API data
-            if 'contributors' in self.__infos_dw:
-                # Filter for main artists only
-                main_artists = [c['name'] for c in self.__infos_dw['contributors'] if c.get('role') == 'Main']
-                if main_artists:
-                    metadata_dict['album_artist'] = "; ".join(main_artists)
 
         return metadata_dict
 
@@ -454,12 +394,16 @@ class EASY_DW:
         self.__c_episode.set_fallback_ids(self.__fallback_ids)
 
     def easy_dw(self) -> Track:
+        # Get image URL and enhance metadata
         if self.__infos_dw.get('__TYPE__') == 'episode':
             pic = self.__infos_dw.get('EPISODE_IMAGE_MD5', '')
         else:
             pic = self.__infos_dw['ALB_PICTURE']
         image = API.choose_img(pic)
         self.__song_metadata['image'] = image
+        
+        # Process image data using unified utility
+        self.__song_metadata = enhance_metadata_with_image(self.__song_metadata)
         song = f"{self.__song_metadata['music']} - {self.__song_metadata['artist']}"
 
         # Check if track already exists based on metadata
@@ -489,31 +433,14 @@ class EASY_DW:
 
             parent_obj, current_track_val, total_tracks_val = self._get_parent_context()
 
-            status_obj = skippedObject(
-                ids=self.__track_obj.ids,
+            # Report track skipped status
+            report_track_skipped(
+                track_obj=self.__track_obj,
                 reason=f"Track already exists in desired format at {existing_file_path}",
-                convert_to=self.__convert_to,
-                bitrate=self.__bitrate
-            )
-            
-            callback_obj = trackCallbackObject(
-                track=self.__track_obj,
-                status_info=status_obj,
-                parent=parent_obj,
+                preferences=self.__preferences,
+                parent_obj=parent_obj,
                 current_track=current_track_val,
                 total_tracks=total_tracks_val
-            )
-        
-            if self.__parent is None:
-                summary = summaryObject(
-                    skipped_tracks=[self.__track_obj],
-                    total_skipped=1
-                )
-                status_obj.summary = summary
-
-            report_progress(
-                reporter=Download_JOB.progress_reporter,
-                callback_obj=callback_obj
             )
 
             skipped_item = Track(
@@ -620,11 +547,23 @@ class EASY_DW:
             current_item.error_message = final_error_msg
             raise TrackNotFound(message=final_error_msg, url=current_link_attr)
 
-        # If we reach here, the item should be successful and not skipped.
+                # If we reach here, the item should be successful and not skipped.
         if current_item.success:
             if self.__infos_dw.get('__TYPE__') != 'episode': # Assuming pic is for tracks
-                 current_item.md5_image = pic # Set md5_image for tracks
-            write_tags(current_item)
+                current_item.md5_image = pic # Set md5_image for tracks
+            # Apply tags using unified utility with Deezer enhancements
+            from deezspot.deezloader.dee_api import API_GW
+            enhanced_metadata = add_deezer_enhanced_metadata(
+                self.__song_metadata,
+                self.__infos_dw,
+                self.__ids,
+                API_GW
+            )
+            process_and_tag_track(
+                track=current_item,
+                metadata_dict=enhanced_metadata,
+                source_type='deezer'
+            )
         
         return current_item
 
@@ -710,19 +649,13 @@ class EASY_DW:
             try:
                 self.__write_track()
                 
-                status_obj = initializingObject(ids=self.__track_obj.ids)
-                
-                callback_obj = trackCallbackObject(
-                    track=self.__track_obj,
-                    status_info=status_obj,
-                    parent=parent_obj,
+                # Report track initialization status
+                report_track_initializing(
+                    track_obj=self.__track_obj,
+                    preferences=self.__preferences,
+                    parent_obj=parent_obj,
                     current_track=current_track_val,
                     total_tracks=total_tracks_val
-                )
-
-                report_progress(
-                    reporter=Download_JOB.progress_reporter,
-                    callback_obj=callback_obj
                 )
                 
                 register_active_download(self.__song_path)
@@ -761,16 +694,22 @@ class EASY_DW:
                     
                     raise TrackNotFound(f"Failed to process {self.__song_path}. Error: {str(e_decrypt)}") from e_decrypt
 
-                self.__add_more_tags()
-                self.__c_track.tags = self.__song_metadata
-
-                if self.__preferences.save_cover and self.__song_metadata.get('image'):
-                    try:
-                        track_directory = os.path.dirname(self.__song_path)
-                        save_cover_image(self.__song_metadata['image'], track_directory, "cover.jpg")
-                        logger.info(f"Saved cover image for track in {track_directory}")
-                    except Exception as e_img_save:
-                        logger.warning(f"Failed to save cover image for track: {e_img_save}")
+                # Add Deezer-specific enhanced metadata and apply tags
+                from deezspot.deezloader.dee_api import API_GW
+                enhanced_metadata = add_deezer_enhanced_metadata(
+                    self.__song_metadata,
+                    self.__infos_dw,
+                    self.__ids,
+                    API_GW
+                )
+                
+                # Apply tags using unified utility
+                process_and_tag_track(
+                    track=self.__c_track,
+                    metadata_dict=enhanced_metadata,
+                    source_type='deezer',
+                    save_cover=getattr(self.__preferences, 'save_cover', False)
+                )
 
                 if self.__convert_to:
                     format_name, bitrate = self._parse_format_string(self.__convert_to)
@@ -794,8 +733,19 @@ class EASY_DW:
                             logger.error(f"Audio conversion error: {str(conv_error)}. Proceeding with original format.")
                             register_active_download(path_before_conversion)
 
-
-                write_tags(self.__c_track)
+                # Apply tags using unified utility with Deezer enhancements
+                from deezspot.deezloader.dee_api import API_GW
+                enhanced_metadata = add_deezer_enhanced_metadata(
+                    self.__song_metadata,
+                    self.__infos_dw,
+                    self.__ids,
+                    API_GW
+                )
+                process_and_tag_track(
+                    track=self.__c_track,
+                    metadata_dict=enhanced_metadata,
+                    source_type='deezer'
+                )
                 self.__c_track.success = True
                 unregister_active_download(self.__song_path)
 
@@ -896,7 +846,19 @@ class EASY_DW:
                 
                 self.__c_track.success = True
                 self.__write_episode()
-                write_tags(self.__c_track)
+                # Apply tags using unified utility with Deezer enhancements
+                from deezspot.deezloader.dee_api import API_GW
+                enhanced_metadata = add_deezer_enhanced_metadata(
+                    self.__song_metadata,
+                    self.__infos_dw,
+                    self.__ids,
+                    API_GW
+                )
+                process_and_tag_track(
+                    track=self.__c_track,
+                    metadata_dict=enhanced_metadata,
+                    source_type='deezer'
+                )
             
                 return self.__c_track
 
@@ -954,49 +916,7 @@ class EASY_DW:
         
         return format_name, bitrate
 
-    def __add_more_tags(self) -> None:
-        """
-        Add Deezer-specific metadata to the song metadata dictionary.
-        This preserves Deezer's unique features like lyrics and contributors.
-        """
-        contributors = self.__infos_dw.get('SNG_CONTRIBUTORS', {})
-
-        # Add contributor information
-        self.__song_metadata['author'] = "; ".join(contributors.get('author', []))
-        self.__song_metadata['composer'] = "; ".join(contributors.get('composer', []))
-        self.__song_metadata['lyricist'] = "; ".join(contributors.get('lyricist', []))
-        
-        if contributors.get('composerlyricist'):
-            self.__song_metadata['composer'] = "; ".join(contributors.get('composerlyricist', []))
-
-        # Add version information if available
-        self.__song_metadata['version'] = self.__infos_dw.get('VERSION', '')
-        
-        # Initialize lyric fields
-        self.__song_metadata['lyric'] = ""
-        self.__song_metadata['copyright'] = ""
-        self.__song_metadata['lyric_sync'] = []
-
-        # Add lyrics if available
-        if self.__infos_dw.get('LYRICS_ID', 0) != 0:
-            try:
-                lyrics_data = API_GW.get_lyric(self.__ids)
-
-                if lyrics_data and "LYRICS_TEXT" in lyrics_data:
-                    self.__song_metadata['lyric'] = lyrics_data["LYRICS_TEXT"]
-
-                if lyrics_data and "LYRICS_SYNC_JSON" in lyrics_data:
-                    self.__song_metadata['lyric_sync'] = trasform_sync_lyric(
-                        lyrics_data['LYRICS_SYNC_JSON']
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to retrieve lyrics: {str(e)}")
-                
-        # Extract album artist from contributors with 'Main' role
-        if 'contributors' in self.__infos_dw:
-            main_artists = [c['name'] for c in self.__infos_dw['contributors'] if c.get('role') == 'Main']
-            if main_artists:
-                self.__song_metadata['album_artist'] = "; ".join(main_artists)
+    # Removed __add_more_tags() - now handled by unified libutils/taggers.py
 
 class DW_TRACK:
     def __init__(
@@ -1030,8 +950,8 @@ class DW_TRACK:
 class DW_ALBUM:
     def _album_object_to_dict(self, album_obj: albumCbObject) -> dict:
         """Converts an albumObject to a dictionary for tagging and path generation."""
-        # Use the new global helper function
-        return _album_object_to_dict(album_obj)
+        # Use the unified metadata converter
+        return album_object_to_dict(album_obj, source_type='deezer')
 
     def _track_object_to_dict(self, track_obj: any, album_obj: albumCbObject) -> dict:
         """Converts a track object to a dictionary with album context."""
@@ -1050,24 +970,11 @@ class DW_ALBUM:
                 album=album_obj,  # Use the parent album
                 genres=getattr(track_obj, 'genres', [])
             )
-            # Now use the new track object with the global helper
-            track_dict = _track_object_to_dict(full_track)
+            # Use the unified metadata converter
+            return track_object_to_dict(full_track, source_type='deezer')
         else:
-            # Use the global helper function with additional album context
-            track_dict = _track_object_to_dict(track_obj)
-        
-        # Add album-specific context that might not be in the track object
-        if album_obj:
-            track_dict['album'] = album_obj.title
-            track_dict['album_artist'] = "; ".join([artist.name for artist in album_obj.artists])
-            track_dict['upc'] = album_obj.ids.upc if album_obj.ids else None
-            track_dict['genre'] = "; ".join(album_obj.genres)
-            
-            # Preserve ISRC if available in the track object
-            if track_obj.ids and track_obj.ids.isrc and not track_dict.get('isrc'):
-                track_dict['isrc'] = track_obj.ids.isrc
-            
-        return track_dict
+            # Use the unified metadata converter
+            return track_object_to_dict(track_obj, source_type='deezer')
 
     def __init__(
         self,
@@ -1087,13 +994,8 @@ class DW_ALBUM:
     def dw(self) -> Album:
         # Report album initializing status
         album_obj = self.__preferences.json_data
-        status_obj = initializingObject(ids=album_obj.ids)
-        callback_obj = albumCallbackObject(album=album_obj, status_info=status_obj)
-
-        report_progress(
-            reporter=Download_JOB.progress_reporter,
-            callback_obj=callback_obj
-        )
+        # Report album initialization status
+        report_album_initializing(album_obj)
         
         infos_dw = API_GW.get_album_data(self.__ids)['data']
         md5_image = infos_dw[0]['ALB_PICTURE']
@@ -1127,7 +1029,6 @@ class DW_ALBUM:
             
         total_tracks = len(infos_dw)
         for a, album_track_obj in enumerate(album_obj.tracks):
-            track_number = a + 1
             c_infos_dw_item = infos_dw[a] 
             
             # Update track object with proper track position and disc number from API
@@ -1138,7 +1039,7 @@ class DW_ALBUM:
             
             # Ensure we have valid values, not None
             if album_track_obj.track_number is None:
-                album_track_obj.track_number = track_number
+                album_track_obj.track_number = a + 1  # Fallback to sequential if API doesn't provide
             if album_track_obj.disc_number is None:
                 album_track_obj.disc_number = 1
                 
@@ -1162,7 +1063,7 @@ class DW_ALBUM:
                 
                 c_preferences.song_metadata = full_track_obj
                 c_preferences.ids = full_track_obj.ids.deezer
-                c_preferences.track_number = track_number
+                c_preferences.track_number = a + 1  # For progress reporting only
                 c_preferences.total_tracks = total_tracks
                 c_preferences.link = f"https://deezer.com/track/{c_preferences.ids}"
                 
@@ -1214,12 +1115,8 @@ class DW_ALBUM:
             total_failed=len(failed_tracks_cb)
         )
         
-        status_obj_done = doneObject(ids=album_obj.ids, summary=summary_obj)
-        callback_obj_done = albumCallbackObject(album=album_obj, status_info=status_obj_done)
-        report_progress(
-            reporter=Download_JOB.progress_reporter,
-            callback_obj=callback_obj_done
-        )
+        # Report album completion status
+        report_album_done(album_obj, summary_obj)
         
         return album
 
@@ -1238,22 +1135,8 @@ class DW_PLAYLIST:
         self.__quality_download = self.__preferences.quality_download
 
     def _track_object_to_dict(self, track_obj: any) -> dict:
-        return {
-            "music": track_obj.title,
-            "artist": "; ".join([artist.name for artist in track_obj.artists]),
-            "album": track_obj.album.title,
-            "tracknum": 0,
-            "discnum": 0,
-            "duration": track_obj.duration_ms // 1000 if track_obj.duration_ms else 0,
-            "year": 0,
-            "explicit": False,
-            "isrc": track_obj.ids.isrc if hasattr(track_obj.ids, 'isrc') else None,
-            "album_artist": "",
-            "upc": None,
-            "label": "",
-            "genre": "",
-            "image": None,
-        }
+        # Use the unified metadata converter
+        return track_object_to_dict(track_obj, source_type='deezer')
 
     def dw(self) -> Playlist:
         playlist_obj: playlistCbObject = self.__preferences.json_data
@@ -1271,12 +1154,7 @@ class DW_PLAYLIST:
         playlist = Playlist()
         tracks = playlist.tracks
 
-        playlist_m3u_dir = os.path.join(self.__output_dir, "playlists")
-        os.makedirs(playlist_m3u_dir, exist_ok=True)
-        m3u_path = os.path.join(playlist_m3u_dir, f"{playlist_name_sanitized}.m3u")
-        if not os.path.exists(m3u_path):
-            with open(m3u_path, "w", encoding="utf-8") as m3u_file:
-                m3u_file.write("#EXTM3U\n")
+        m3u_path = create_m3u_file(self.__output_dir, playlist_obj.title)
 
         medias = Download_JOB.check_sources(infos_dw, self.__quality_download)
 
@@ -1341,12 +1219,7 @@ class DW_PLAYLIST:
             if current_track_object:
                 tracks.append(current_track_object)
                 if current_track_object.success and hasattr(current_track_object, 'song_path') and current_track_object.song_path:
-                    relative_song_path = os.path.relpath(
-                        current_track_object.song_path,
-                            start=playlist_m3u_dir
-                    )
-                    with open(m3u_path, "a", encoding="utf-8") as m3u_file:
-                        m3u_file.write(f"{relative_song_path}\n")
+                    append_track_to_m3u(m3u_path, current_track_object.song_path)
 
         if self.__make_zip:
             zip_name = f"{self.__output_dir}/{playlist_obj.title} [playlist {self.__ids}]"

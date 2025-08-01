@@ -32,6 +32,17 @@ from deezspot.libutils.utils import (
     save_cover_image,
     __get_dir as get_album_directory,
 )
+from deezspot.libutils.write_m3u import create_m3u_file, append_track_to_m3u
+from deezspot.libutils.metadata_converter import track_object_to_dict, album_object_to_dict
+from deezspot.libutils.progress_reporter import (
+    report_track_initializing, report_track_skipped, report_track_retrying,
+    report_track_realtime_progress, report_track_error, report_track_done,
+    report_album_initializing, report_album_done, report_playlist_initializing, report_playlist_done
+)
+from deezspot.libutils.taggers import (
+    enhance_metadata_with_image, process_and_tag_track, process_and_tag_episode,
+    save_cover_image_for_track
+)
 from deezspot.libutils.logging_utils import logger, report_progress
 from deezspot.libutils.cleanup_utils import (
     register_active_download,
@@ -49,7 +60,6 @@ from deezspot.models.callback import (
     IDs
 )
 from deezspot.spotloader.__spo_api__ import tracking, json_to_track_playlist_object
-from datetime import datetime
 
 # --- Global retry counter variables ---
 GLOBAL_RETRY_COUNT = 0
@@ -58,103 +68,15 @@ GLOBAL_MAX_RETRIES = 100  # Adjust this value as needed
 # --- Global tracking of active downloads ---
 # Moved to deezspot.libutils.cleanup_utils
 
+# Use unified metadata converter
 def _track_object_to_dict(track_obj: trackObject) -> dict:
     """Converts a trackObject into a dictionary for legacy functions like taggers."""
-    if not track_obj:
-        return {}
-    
-    tags = {}
-    
-    # Track details
-    tags['music'] = track_obj.title
-    tags['tracknum'] = track_obj.track_number
-    tags['discnum'] = track_obj.disc_number
-    tags['duration'] = track_obj.duration_ms // 1000 if track_obj.duration_ms else 0
-    if track_obj.ids:
-        tags['ids'] = track_obj.ids.spotify
-        tags['isrc'] = track_obj.ids.isrc
-        
-    tags['artist'] = "; ".join([artist.name for artist in track_obj.artists])
+    return track_object_to_dict(track_obj, source_type='spotify')
 
-    # Album details
-    if track_obj.album:
-        album = track_obj.album
-        tags['album'] = album.title
-        tags['ar_album'] = "; ".join([artist.name for artist in album.artists])
-        tags['nb_tracks'] = album.total_tracks
-        if album.release_date and 'year' in album.release_date:
-            try:
-                # Create a datetime object for the tagger
-                tags['year'] = datetime(
-                    year=album.release_date['year'],
-                    month=album.release_date.get('month', 1),
-                    day=album.release_date.get('day', 1)
-                )
-            except (ValueError, TypeError):
-                tags['year'] = None # Handle invalid date parts
-        else:
-            tags['year'] = None
-
-        if album.ids:
-            tags['upc'] = album.ids.upc
-            tags['album_id'] = album.ids.spotify
-        
-        if album.images:
-            tags['image'] = max(album.images, key=lambda i: i.get('height', 0) * i.get('width', 0)).get('url') if album.images else None
-        else:
-            tags['image'] = None
-
-        # These are not in the model, add them from album if they exist
-        tags['label'] = getattr(album, 'label', '')
-        tags['copyright'] = getattr(album, 'copyright', '')
-
-    # Default/Placeholder values
-    tags['bpm'] = tags.get('bpm', 'Unknown')
-    tags['gain'] = tags.get('gain', 'Unknown')
-    tags['lyric'] = tags.get('lyric', '')
-    tags['author'] = tags.get('author', '')
-    tags['composer'] = tags.get('composer', '')
-    tags['lyricist'] = tags.get('lyricist', '')
-    tags['version'] = tags.get('version', '')
-
-    return tags
-
+# Use unified metadata converter
 def _album_object_to_dict(album_obj: albumObject) -> dict:
     """Converts an albumObject into a dictionary for legacy functions."""
-    if not album_obj:
-        return {}
-        
-    tags = {}
-
-    # Album details
-    tags['album'] = album_obj.title
-    tags['ar_album'] = "; ".join([artist.name for artist in album_obj.artists])
-    tags['nb_tracks'] = album_obj.total_tracks
-    if album_obj.release_date and 'year' in album_obj.release_date:
-        try:
-            tags['year'] = datetime(
-                year=album_obj.release_date['year'],
-                month=album_obj.release_date.get('month', 1),
-                day=album_obj.release_date.get('day', 1)
-            )
-        except (ValueError, TypeError):
-            tags['year'] = None
-    else:
-        tags['year'] = None
-
-    if album_obj.ids:
-        tags['upc'] = album_obj.ids.upc
-        tags['album_id'] = album_obj.ids.spotify
-    
-    if album_obj.images:
-        tags['image'] = max(album_obj.images, key=lambda i: i.get('height', 0) * i.get('width', 0)).get('url') if album_obj.images else None
-    else:
-        tags['image'] = None
-
-    tags['label'] = getattr(album_obj, 'label', '')
-    tags['copyright'] = getattr(album_obj, 'copyright', '')
-        
-    return tags
+    return album_object_to_dict(album_obj, source_type='spotify')
 
 class Download_JOB:
     session = None
@@ -377,11 +299,8 @@ class EASY_DW:
         return self.__c_track
 
     def easy_dw(self) -> Track:
-        # Request the image data
-        pic = self.__song_metadata_dict.get('image')
-        image = request(pic).content if pic else None
-        if image:
-            self.__song_metadata_dict['image'] = image
+        # Process image data using unified utility
+        self.__song_metadata_dict = enhance_metadata_with_image(self.__song_metadata_dict)
 
         try:
             # Initialize success to False, it will be set to True if download_try is successful
@@ -426,8 +345,13 @@ class EASY_DW:
             
         # If we reach here, the track should be successful and not skipped.
         if hasattr(self, '_EASY_DW__c_track') and self.__c_track and self.__c_track.success:
-            self.__c_track.tags = self.__song_metadata_dict
-            write_tags(self.__c_track)
+            # Apply tags using unified utility
+            process_and_tag_track(
+                track=self.__c_track,
+                metadata_dict=self.__song_metadata_dict,
+                source_type='spotify',
+                save_cover=getattr(self.__preferences, 'save_cover', False)
+            )
         
         # Unregister the final successful file path after all operations are done.
         # self.__c_track.song_path would have been updated by __convert_audio__ if conversion occurred.
@@ -478,28 +402,15 @@ class EASY_DW:
                 parent_obj = playlistTrackObject(
                     title=parent_info.get("name"),
                     owner=userObject(name=parent_info.get("owner"))
-                )
+                                )
 
-            # Build status object
-            status_obj = skippedObject(
-                ids=self.__song_metadata.ids,
+            # Report track skipped status
+            report_track_skipped(
+                track_obj=track_obj,
                 reason=f"Track already exists at '{existing_file_path}'",
-                convert_to=self.__preferences.convert_to,
-                bitrate=self.__preferences.bitrate
-            )
-
-            # Build callback object
-            callback_obj = trackCallbackObject(
-                track=track_obj,
-                status_info=status_obj,
-                current_track=getattr(self.__preferences, 'track_number', None),
-                total_tracks=total_tracks_val,
-                parent=parent_obj
-            )
-
-            report_progress(
-                reporter=Download_JOB.progress_reporter,
-                callback_obj=callback_obj
+                preferences=self.__preferences,
+                parent_obj=parent_obj,
+                total_tracks=total_tracks_val
             )
             return self.__c_track
 
@@ -519,25 +430,12 @@ class EASY_DW:
                 owner=userObject(name=parent_info.get("owner"))
             )
 
-        # Build status object
-        status_obj = initializingObject(
-            ids=self.__song_metadata.ids,
-            convert_to=self.__preferences.convert_to,
-            bitrate=self.__preferences.bitrate
-        )
-
-        # Build callback object
-        callback_obj = trackCallbackObject(
-            track=track_obj,
-            status_info=status_obj,
-            current_track=getattr(self.__preferences, 'track_number', None),
-            total_tracks=total_tracks_val,
-            parent=parent_obj
-        )
-
-        report_progress(
-            reporter=Download_JOB.progress_reporter,
-            callback_obj=callback_obj
+        # Report track initialization status
+        report_track_initializing(
+            track_obj=track_obj,
+            preferences=self.__preferences,
+            parent_obj=parent_obj,
+            total_tracks=total_tracks_val
         )
         
         # If track does not exist in the desired final format, proceed with download/conversion
@@ -593,27 +491,14 @@ class EASY_DW:
                                     if current_percentage > self._last_reported_percentage:
                                         self._last_reported_percentage = current_percentage
                                         
-                                        # Build status object
-                                        status_obj = realTimeObject(
-                                            ids=self.__song_metadata.ids,
+                                                                                                        # Report real-time progress
+                                        report_track_realtime_progress(
+                                            track_obj=track_obj,
                                             time_elapsed=int((current_time - start_time) * 1000),
                                             progress=current_percentage,
-                                            convert_to=self.__convert_to,
-                                            bitrate=self.__bitrate
-                                        )
-
-                                        # Build callback object
-                                        callback_obj = trackCallbackObject(
-                                            track=track_obj,
-                                            status_info=status_obj,
-                                            current_track=getattr(self.__preferences, 'track_number', None),
-                                            total_tracks=total_tracks_val,
-                                            parent=parent_obj
-                                        )
-
-                                        report_progress(
-                                            reporter=Download_JOB.progress_reporter,
-                                            callback_obj=callback_obj
+                                            preferences=self.__preferences,
+                                            parent_obj=parent_obj,
+                                            total_tracks=total_tracks_val
                                         )
                                         
                                     # Rate limiting (if needed)
@@ -669,28 +554,15 @@ class EASY_DW:
                     os.remove(self.__song_path)
                 unregister_active_download(self.__song_path)
                 
-                # Build status object
-                status_obj = retryingObject(
-                    ids=self.__song_metadata.ids,
+                # Report retry status
+                report_track_retrying(
+                    track_obj=track_obj,
                     retry_count=retries,
                     seconds_left=retry_delay,
                     error=str(e),
-                    convert_to=self.__convert_to,
-                    bitrate=self.__bitrate
-                )
-
-                # Build callback object
-                callback_obj = trackCallbackObject(
-                    track=track_obj,
-                    status_info=status_obj,
-                    current_track=getattr(self.__preferences, 'track_number', None),
-                    total_tracks=total_tracks_val,
-                    parent=parent_obj
-                )
-                    
-                report_progress(
-                    reporter=Download_JOB.progress_reporter,
-                    callback_obj=callback_obj
+                    preferences=self.__preferences,
+                    parent_obj=parent_obj,
+                    total_tracks=total_tracks_val
                 )
                     
                 if retries >= max_retries or GLOBAL_RETRY_COUNT >= GLOBAL_MAX_RETRIES:
@@ -710,15 +582,8 @@ class EASY_DW:
                 retry_delay += retry_delay_increase  # Use the custom retry delay increase
                 
         # Save cover image if requested, after successful download and before conversion
-        if self.__preferences.save_cover and hasattr(self, '_EASY_DW__song_path') and self.__song_path and self.__song_metadata_dict.get('image'):
-            try:
-                track_directory = dirname(self.__song_path)
-                # Ensure the directory exists (it should, from os.makedirs earlier)
-                image_bytes = request(self.__song_metadata_dict['image']).content
-                save_cover_image(image_bytes, track_directory, "cover.jpg")
-                logger.info(f"Saved cover image for track in {track_directory}")
-            except Exception as e_img_save:
-                logger.warning(f"Failed to save cover image for track: {e_img_save}")
+        if self.__preferences.save_cover and hasattr(self, '_EASY_DW__song_path') and self.__song_path:
+            save_cover_image_for_track(self.__song_metadata_dict, self.__song_path, self.__preferences.save_cover)
 
         try:
             self.__convert_audio()
@@ -732,26 +597,13 @@ class EASY_DW:
             else:
                 error_msg = f"Audio conversion failed: {original_error_str}"
             
-            # Build status object
-            status_obj = errorObject(
-                ids=self.__song_metadata.ids,
+            # Report error status
+            report_track_error(
+                track_obj=track_obj,
                 error=error_msg,
-                convert_to=self.__convert_to,
-                bitrate=self.__bitrate
-            )
-
-            # Build callback object
-            callback_obj = trackCallbackObject(
-                track=track_obj,
-                status_info=status_obj,
-                current_track=getattr(self.__preferences, 'track_number', None),
-                total_tracks=total_tracks_val,
-                parent=parent_obj
-            )
-
-            report_progress(
-                reporter=Download_JOB.progress_reporter,
-                callback_obj=callback_obj
+                preferences=self.__preferences,
+                parent_obj=parent_obj,
+                total_tracks=total_tracks_val
             )
             logger.error(f"Audio conversion error: {error_msg}")
             
@@ -768,26 +620,13 @@ class EASY_DW:
                 # If conversion fails twice, create a final error report
                 error_msg_2 = f"Audio conversion failed after retry for '{self.__song_metadata.title}'. Original error: {str(conv_e)}"
                 
-                # Build status object
-                status_obj = errorObject(
-                    ids=self.__song_metadata.ids,
+                # Report error status
+                report_track_error(
+                    track_obj=track_obj,
                     error=error_msg_2,
-                    convert_to=self.__convert_to,
-                    bitrate=self.__bitrate
-                )
-
-                # Build callback object
-                callback_obj = trackCallbackObject(
-                    track=track_obj,
-                    status_info=status_obj,
-                    current_track=getattr(self.__preferences, 'track_number', None),
-                    total_tracks=total_tracks_val,
-                    parent=parent_obj
-                )
-
-                report_progress(
-                    reporter=Download_JOB.progress_reporter,
-                    callback_obj=callback_obj
+                    preferences=self.__preferences,
+                    parent_obj=parent_obj,
+                    total_tracks=total_tracks_val
                 )
                 logger.error(error_msg)
                 
@@ -801,8 +640,12 @@ class EASY_DW:
 
         if hasattr(self, '_EASY_DW__c_track') and self.__c_track: 
             self.__c_track.success = True
-            self.__c_track.tags = self.__song_metadata_dict
-            write_tags(self.__c_track)
+            # Apply tags using unified utility
+            process_and_tag_track(
+                track=self.__c_track,
+                metadata_dict=self.__song_metadata_dict,
+                source_type='spotify'
+            )
         
         # Create done status report
         parent_info, total_tracks_val = self._get_parent_info()
@@ -823,26 +666,14 @@ class EASY_DW:
                 total_failed=0
             )
 
-        # Build status object
-        status_obj = doneObject(
-            ids=self.__song_metadata.ids,
+        # Report track done status
+        report_track_done(
+            track_obj=track_obj,
+            preferences=self.__preferences,
             summary=summary_obj,
-            convert_to=self.__convert_to,
-            bitrate=self.__bitrate
-        )
-
-        # Build callback object
-        callback_obj = trackCallbackObject(
-            track=track_obj,
-            status_info=status_obj,
+            parent_obj=parent_obj,
             current_track=current_track_val,
-            total_tracks=total_tracks_val,
-            parent=parent_obj
-        )
-
-        report_progress(
-            reporter=Download_JOB.progress_reporter,
-            callback_obj=callback_obj
+            total_tracks=total_tracks_val
         )
 
         if hasattr(self, '_EASY_DW__c_track') and self.__c_track and self.__c_track.success:
@@ -1053,8 +884,12 @@ class EASY_DW:
         # If we reach here, download and any conversion were successful.
         if hasattr(self, '_EASY_DW__c_episode') and self.__c_episode:
             self.__c_episode.success = True 
-            self.__c_episode.tags = self.__song_metadata_dict
-            write_tags(self.__c_episode)
+            # Apply tags using unified utility
+            process_and_tag_episode(
+                episode=self.__c_episode,
+                metadata_dict=self.__song_metadata_dict,
+                source_type='spotify'
+            )
             # Unregister the final successful file path for episodes, as it's now complete.
             # self.__c_episode.episode_path would have been updated by __convert_audio__ if conversion occurred.
             unregister_active_download(self.__c_episode.episode_path)
@@ -1106,13 +941,7 @@ class DW_ALBUM:
     def dw(self) -> Album:
         # Report album initializing status
         album_obj = self.__album_metadata
-        status_obj = initializingObject(ids=album_obj.ids)
-        callback_obj = albumCallbackObject(album=album_obj, status_info=status_obj)
-
-        report_progress(
-            reporter=Download_JOB.progress_reporter,
-            callback_obj=callback_obj
-        )
+        report_album_initializing(album_obj)
         
         pic_url = max(album_obj.images, key=lambda i: i.get('height', 0) * i.get('width', 0)).get('url') if album_obj.images else None
         image_bytes = request(pic_url).content if pic_url else None
@@ -1133,11 +962,14 @@ class DW_ALBUM:
             pad_tracks=self.__preferences.pad_tracks
         )
         
+        # Calculate total number of discs for proper metadata tagging
+        total_discs = max((track.disc_number for track in album_obj.tracks), default=1)
+        
         for a, track_in_album in enumerate(album_obj.tracks):
-            current_track = a + 1
             
             c_preferences = deepcopy(self.__preferences)
-            c_preferences.track_number = current_track
+            # Use actual track position for progress tracking, not for metadata
+            c_preferences.track_number = a + 1  # For progress reporting only
             
             try:
                 # Fetch full track object as album endpoint only provides simplified track objects
@@ -1210,13 +1042,7 @@ class DW_ALBUM:
             total_failed=len(failed_tracks)
         )
         
-        status_obj = doneObject(ids=album_obj.ids, summary=summary_obj)
-        callback_obj = albumCallbackObject(album=album_obj, status_info=status_obj)
-
-        report_progress(
-            reporter=Download_JOB.progress_reporter,
-            callback_obj=callback_obj
-        )
+        report_album_done(album_obj, summary_obj)
         
         return album
 
@@ -1259,21 +1085,10 @@ class DW_PLAYLIST:
         # --- End build playlistObject ---
 
         # Report playlist initializing status
-        status_obj = initializingObject(ids=IDs(spotify=playlist_id))
-        callback_obj = playlistCallbackObject(playlist=playlist_obj_for_cb, status_info=status_obj)
-        report_progress(
-            reporter=Download_JOB.progress_reporter,
-            callback_obj=callback_obj
-        )
+        report_playlist_initializing(playlist_obj_for_cb)
         
         # --- Prepare the m3u playlist file ---
-        playlist_m3u_dir = os.path.join(self.__output_dir, "playlists")
-        os.makedirs(playlist_m3u_dir, exist_ok=True)
-        playlist_name_sanitized = sanitize_name(playlist_name)
-        m3u_path = os.path.join(playlist_m3u_dir, f"{playlist_name_sanitized}.m3u")
-        if not os.path.exists(m3u_path):
-            with open(m3u_path, "w", encoding="utf-8") as m3u_file:
-                m3u_file.write("#EXTM3U\n")
+        m3u_path = create_m3u_file(self.__output_dir, playlist_name)
         # -------------------------------------
 
         playlist = Playlist()
@@ -1319,9 +1134,7 @@ class DW_PLAYLIST:
 
             # --- Append the final track path to the m3u file using a relative path ---
             if track and track.success and hasattr(track, 'song_path') and track.song_path:
-                relative_path = os.path.relpath(track.song_path, start=playlist_m3u_dir)
-                with open(m3u_path, "a", encoding="utf-8") as m3u_file:
-                    m3u_file.write(f"{relative_path}\n")
+                append_track_to_m3u(m3u_path, track.song_path)
             # ---------------------------------------------------------------------
         
         if self.__make_zip:
@@ -1361,13 +1174,7 @@ class DW_PLAYLIST:
             total_failed=len(failed_tracks_cb)
         )
         
-        status_obj = doneObject(ids=playlist_obj_for_cb.ids, summary=summary_obj)
-        callback_obj = playlistCallbackObject(playlist=playlist_obj_for_cb, status_info=status_obj)
-
-        report_progress(
-            reporter=Download_JOB.progress_reporter,
-            callback_obj=callback_obj,
-        )
+        report_playlist_done(playlist_obj_for_cb, summary_obj)
         
         return playlist
 
