@@ -4,7 +4,7 @@ import os
 from typing import Dict, Any, Optional, Union
 from deezspot.libutils.utils import request
 from deezspot.libutils.logging_utils import logger
-from deezspot.__taggers__ import write_tags
+from deezspot.libutils.write_tags import write_tags
 from deezspot.models.download import Track, Episode
 
 

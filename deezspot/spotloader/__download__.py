@@ -9,7 +9,7 @@ from deezspot.exceptions import TrackNotFound
 from librespot.metadata import TrackId, EpisodeId
 from deezspot.spotloader.spotify_settings import qualities
 from deezspot.libutils.others_settings import answers
-from deezspot.__taggers__ import write_tags, check_track
+from deezspot.libutils.write_tags import check_track
 from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
 from deezspot.libutils.audio_converter import convert_audio, AUDIO_FORMATS, get_output_path
 from os import (

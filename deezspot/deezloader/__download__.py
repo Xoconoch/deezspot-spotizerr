@@ -10,7 +10,6 @@ from deezspot.deezloader.dee_api import API
 from deezspot.deezloader.deegw_api import API_GW
 from deezspot.deezloader.deezer_settings import qualities
 from deezspot.libutils.others_settings import answers
-from deezspot.__taggers__ import write_tags, check_track
 from deezspot.deezloader.__download_utils__ import decryptfile, gen_song_hash
 from deezspot.exceptions import (
     TrackNotFound,
