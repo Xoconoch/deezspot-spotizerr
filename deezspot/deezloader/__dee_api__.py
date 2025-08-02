@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any
 
 from deezspot.models.callback.common import IDs
 from deezspot.models.callback.track import (
@@ -23,6 +23,7 @@ from deezspot.models.callback.playlist import (
     artistAlbumTrackPlaylistObject,
 )
 from deezspot.models.callback.user import userObject
+from deezspot.libutils.logging_utils import logger
 
 def _parse_release_date(date_str: Optional[str]) -> Dict[str, Any]:
     if not date_str:
@@ -234,7 +235,15 @@ def tracking_album(album_json: dict) -> Optional[albumObject]:
         )
         album_tracks.append(track)
 
+    # Calculate total discs by finding the maximum disc number
+    total_discs = 1
+    if album_tracks:
+        disc_numbers = [track.disc_number for track in album_tracks if hasattr(track, 'disc_number') and track.disc_number]
+        total_discs = max(disc_numbers, default=1)
+    
+    # Update album object with tracks and total discs
     album_obj.tracks = album_tracks
+    album_obj.total_discs = total_discs
     
     return album_obj
 
@@ -378,6 +387,21 @@ def create_standardized_track(track_json: dict) -> trackObject:
                 name=track_json["album"]["artist"].get('name', ''),
                 ids=IDs(deezer=track_json["album"]["artist"].get('id'))
             ))
+        
+        # Try to get full album information for accurate total_discs
+        total_discs = 1
+        album_id = track_json["album"].get('id')
+        if album_id:
+            try:
+                # Import here to avoid circular imports
+                from deezspot.deezloader.dee_api import API
+                full_album_obj = API.get_album(album_id)
+                if full_album_obj and hasattr(full_album_obj, 'total_discs'):
+                    total_discs = full_album_obj.total_discs
+            except Exception as e:
+                # If album fetching fails, fall back to default
+                logger.debug(f"Could not fetch full album data for total_discs calculation: {e}")
+                total_discs = 1
             
         album_data = albumTrackObject(
             album_type=track_json["album"].get('record_type', ''),
@@ -387,6 +411,7 @@ def create_standardized_track(track_json: dict) -> trackObject:
             release_date=_parse_release_date(track_json["album"].get('release_date')),
             artists=album_artists,
             total_tracks=track_json["album"].get('nb_tracks', 0),
+            total_discs=total_discs,  # Set the calculated or fetched total discs
             genres=[g['name'] for g in track_json["album"].get('genres', {}).get('data', [])]
         )
     

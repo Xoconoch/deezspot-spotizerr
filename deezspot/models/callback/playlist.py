@@ -21,6 +21,7 @@ class albumTrackPlaylistObject:
     title: str = ""
     release_date: Dict[str, Any] = field(default_factory=dict)  # ReleaseDate as dict
     total_tracks: int = 0
+    total_discs: int = 1  # New field for multi-disc album support
     images: List[Dict[str, Any]] = field(default_factory=list)
     ids: IDs = field(default_factory=IDs)
     artists: List[artistAlbumTrackPlaylistObject] = field(default_factory=list)

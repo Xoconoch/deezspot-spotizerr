@@ -163,8 +163,11 @@ def track_object_to_dict(track_obj: Any, source_type: Optional[str] = None) -> D
             
         tags['nb_tracks'] = getattr(album, 'total_tracks', 0)
         
-        # Calculate total discs from all tracks in album for proper metadata
-        if hasattr(album, 'tracks') and album.tracks:
+        # Use the album's total_discs field if available, otherwise calculate from tracks
+        if hasattr(album, 'total_discs') and album.total_discs:
+            tags['nb_discs'] = album.total_discs
+        elif hasattr(album, 'tracks') and album.tracks:
+            # Fallback: Calculate total discs from all tracks in album for proper metadata
             disc_numbers = [getattr(track, 'disc_number', 1) for track in album.tracks if hasattr(track, 'disc_number')]
             tags['nb_discs'] = max(disc_numbers, default=1)
         else:

@@ -87,16 +87,27 @@ def tracking(ids, album_data_for_track=None, market: list[str] | None = None) ->
         _check_market_availability(track_name_for_check, "Track", api_track_markets, market)
 
         album_to_process = None
+        full_album_obj = None
+        
         if album_data_for_track:
             album_to_process = album_data_for_track
         elif json_track.get('album'):
             album_id = json_track.get('album', {}).get('id')
             if album_id:
-                album_to_process = Spo.get_album(album_id)
+                # Try to get full album data with all tracks for proper disc counting
+                full_album_data = Spo.get_album(album_id)
+                if full_album_data:
+                    album_to_process = full_album_data
+                    # Also create a full album object to get total_discs
+                    full_album_obj = tracking_album(full_album_data, market)
             if not album_to_process:
                album_to_process = json_track.get('album')
 
         album_for_track = _json_to_album_track_object(album_to_process) if album_to_process else albumTrackObject()
+        
+        # If we have a full album object with total_discs, use that information
+        if full_album_obj and hasattr(full_album_obj, 'total_discs'):
+            album_for_track.total_discs = full_album_obj.total_discs
         
         track_obj = trackObject(
             title=json_track.get('name', ''),
@@ -170,11 +181,18 @@ def tracking_album(album_json, market: list[str] | None = None) -> Optional[albu
             # Simplified track object from album endpoint is enough for trackAlbumObject
             album_tracks.append(_json_to_track_album_object(track_item))
 
+        # Calculate total discs by finding the maximum disc number
+        total_discs = 1
+        if album_tracks:
+            disc_numbers = [track.disc_number for track in album_tracks if hasattr(track, 'disc_number') and track.disc_number]
+            total_discs = max(disc_numbers, default=1)
+
         album_obj = albumObject(
             album_type=album_json.get('album_type'),
             title=album_json.get('name'),
             release_date=_parse_release_date(album_json.get('release_date'), album_json.get('release_date_precision')),
             total_tracks=album_json.get('total_tracks'),
+            total_discs=total_discs,  # Set the calculated total discs
             genres=album_json.get('genres', []),
             images=album_json.get('images', []),
             copyrights=album_json.get('copyrights', []),

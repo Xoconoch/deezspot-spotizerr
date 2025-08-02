@@ -31,6 +31,7 @@ class albumTrackObject:
     title: str = ""
     release_date: Dict[str, Any] = field(default_factory=dict)  # ReleaseDate as dict
     total_tracks: int = 0
+    total_discs: int = 1  # New field for multi-disc album support
     genres: List[str] = field(default_factory=list)
     images: List[Dict[str, Any]] = field(default_factory=list)
     ids: IDs = field(default_factory=IDs)
