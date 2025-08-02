@@ -968,8 +968,6 @@ class DW_ALBUM:
         for a, track_in_album in enumerate(album_obj.tracks):
             
             c_preferences = deepcopy(self.__preferences)
-            # Use actual track position for progress tracking, not for metadata
-            c_preferences.track_number = a + 1  # For progress reporting only
             
             try:
                 # Fetch full track object as album endpoint only provides simplified track objects
@@ -985,6 +983,8 @@ class DW_ALBUM:
                 c_preferences.song_metadata = full_track_obj
                 c_preferences.ids = full_track_obj.ids.spotify
                 c_preferences.link = f"https://open.spotify.com/track/{c_preferences.ids}"
+                # Set album position for progress reporting (not for metadata - that comes from API)
+                c_preferences.track_number = a + 1
 
                 track = EASY_DW(c_preferences, parent='album').easy_dw()
 

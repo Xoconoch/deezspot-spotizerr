@@ -170,16 +170,34 @@ def tracking_album(album_json, market: list[str] | None = None) -> Optional[albu
 
         track_items_to_process = []
         if full_tracks_data and full_tracks_data.get('tracks'):
-            track_items_to_process = full_tracks_data['tracks']
-        else: # Fallback to simplified if batch fetch fails
+            # Create a mapping of track ID to full track data to preserve original album order
+            full_tracks_by_id = {track['id']: track for track in full_tracks_data['tracks'] if track and track.get('id')}
+            
+            # Process tracks in the original album order using the full track data when available
+            for simplified_track in simplified_tracks:
+                if not simplified_track or not simplified_track.get('id'):
+                    continue
+                
+                track_id = simplified_track['id']
+                # Use full track data if available, otherwise fall back to simplified
+                track_to_use = full_tracks_by_id.get(track_id, simplified_track)
+                track_items_to_process.append(track_to_use)
+        else: 
+            # Fallback to simplified if batch fetch fails
             track_items_to_process = simplified_tracks
 
-        for track_item in track_items_to_process:
+        for index, track_item in enumerate(track_items_to_process):
             if not track_item or not track_item.get('id'):
                 continue
 
+            # For album context, use the position in album as track number to ensure correct ordering
+            # This is important for compilation albums where individual tracks may have different track numbers
+            track_item_copy = dict(track_item)  # Create a copy to avoid modifying original
+            track_item_copy['track_number'] = index + 1  # Use album position as track number
+            track_item_copy['disc_number'] = track_item.get('disc_number', 1)  # Keep original disc number
+            
             # Simplified track object from album endpoint is enough for trackAlbumObject
-            album_tracks.append(_json_to_track_album_object(track_item))
+            album_tracks.append(_json_to_track_album_object(track_item_copy))
 
         # Calculate total discs by finding the maximum disc number
         total_discs = 1
