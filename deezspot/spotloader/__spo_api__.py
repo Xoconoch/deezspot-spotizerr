@@ -88,9 +88,29 @@ def tracking(ids, album_data_for_track=None, market: list[str] | None = None) ->
 
         album_to_process = None
         full_album_obj = None
+        album_track_number = json_track.get('track_number', 1)  # Default to individual track number
+        album_disc_number = json_track.get('disc_number', 1)    # Default to individual disc number
         
         if album_data_for_track:
             album_to_process = album_data_for_track
+            # When we have album context, find the track's correct position within its disc
+            simplified_tracks = album_data_for_track.get('tracks', {}).get('items', [])
+            
+            # Group tracks by disc and calculate track numbers relative to each disc
+            disc_track_counts = {}
+            for track_item in simplified_tracks:
+                if track_item and track_item.get('id'):
+                    disc_num = track_item.get('disc_number', 1)
+                    if disc_num not in disc_track_counts:
+                        disc_track_counts[disc_num] = 0
+                    
+                    if track_item.get('id') == ids:
+                        disc_track_counts[disc_num] += 1
+                        album_track_number = disc_track_counts[disc_num]  # Track number within disc
+                        album_disc_number = disc_num  # Disc number from album context
+                        break
+                    else:
+                        disc_track_counts[disc_num] += 1
         elif json_track.get('album'):
             album_id = json_track.get('album', {}).get('id')
             if album_id:
@@ -111,8 +131,8 @@ def tracking(ids, album_data_for_track=None, market: list[str] | None = None) ->
         
         track_obj = trackObject(
             title=json_track.get('name', ''),
-            disc_number=json_track.get('disc_number', 1),
-            track_number=json_track.get('track_number', 1),
+            disc_number=album_disc_number,
+            track_number=album_track_number,
             duration_ms=json_track.get('duration_ms', 0),
             explicit=json_track.get('explicit', False),
             genres=album_for_track.genres,
@@ -186,15 +206,24 @@ def tracking_album(album_json, market: list[str] | None = None) -> Optional[albu
             # Fallback to simplified if batch fetch fails
             track_items_to_process = simplified_tracks
 
-        for index, track_item in enumerate(track_items_to_process):
+        # Group tracks by disc and assign correct track numbers within each disc
+        disc_track_counts = {}
+        
+        for track_item in track_items_to_process:
             if not track_item or not track_item.get('id'):
                 continue
 
-            # For album context, use the position in album as track number to ensure correct ordering
-            # This is important for compilation albums where individual tracks may have different track numbers
+            # Get disc number and increment track count for this disc
+            disc_num = track_item.get('disc_number', 1)
+            if disc_num not in disc_track_counts:
+                disc_track_counts[disc_num] = 0
+            disc_track_counts[disc_num] += 1
+
+            # For album context, use the track position within its disc for correct numbering
+            # This is important for compilation albums and multi-disc albums
             track_item_copy = dict(track_item)  # Create a copy to avoid modifying original
-            track_item_copy['track_number'] = index + 1  # Use album position as track number
-            track_item_copy['disc_number'] = track_item.get('disc_number', 1)  # Keep original disc number
+            track_item_copy['track_number'] = disc_track_counts[disc_num]  # Track number within disc
+            track_item_copy['disc_number'] = disc_num  # Keep disc number
             
             # Simplified track object from album endpoint is enough for trackAlbumObject
             album_tracks.append(_json_to_track_album_object(track_item_copy))

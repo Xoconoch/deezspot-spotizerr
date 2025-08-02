@@ -13,3 +13,7 @@ Test.py
 deezspot/models/callback/__pycache__/
 deezspot/models/download/__pycache__/
 objects.ts
+callback.log
+.gitignore
+deezspot_test.log
+spotify_downloads
