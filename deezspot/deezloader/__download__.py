@@ -1223,7 +1223,7 @@ class DW_PLAYLIST:
             if current_track_object:
                 tracks.append(current_track_object)
                 if current_track_object.success and hasattr(current_track_object, 'song_path') and current_track_object.song_path:
-                    append_track_to_m3u(m3u_path, current_track_object.song_path)
+                    append_track_to_m3u(m3u_path, current_track_object)
 
         if self.__make_zip:
             zip_name = f"{self.__output_dir}/{playlist_obj.title} [playlist {self.__ids}]"

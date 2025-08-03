@@ -1132,9 +1132,9 @@ class DW_PLAYLIST:
             if track:
                 tracks.append(track)
 
-            # --- Append the final track path to the m3u file using a relative path ---
+            # --- Append the final track to the m3u file with extended format ---
             if track and track.success and hasattr(track, 'song_path') and track.song_path:
-                append_track_to_m3u(m3u_path, track.song_path)
+                append_track_to_m3u(m3u_path, track)
             # ---------------------------------------------------------------------
         
         if self.__make_zip:
