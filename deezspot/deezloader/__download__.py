@@ -160,6 +160,7 @@ class Download_JOB:
         infos_dw: list,
         quality_download: str  
     ) -> list:
+        from deezspot.deezloader.deegw_api import API_GW
         # Preprocess episodes separately
         medias = []
         for track in infos_dw:
@@ -551,7 +552,7 @@ class EASY_DW:
             if self.__infos_dw.get('__TYPE__') != 'episode': # Assuming pic is for tracks
                 current_item.md5_image = pic # Set md5_image for tracks
             # Apply tags using unified utility with Deezer enhancements
-            from deezspot.deezloader.dee_api import API_GW
+            from deezspot.deezloader.deegw_api import API_GW
             enhanced_metadata = add_deezer_enhanced_metadata(
                 self.__song_metadata,
                 self.__infos_dw,
@@ -567,6 +568,7 @@ class EASY_DW:
         return current_item
 
     def download_try(self) -> Track:
+        from deezspot.deezloader.deegw_api import API_GW
         # Pre-check: if FLAC is requested but filesize is zero, fallback to MP3.
         if self.__file_format == '.flac':
             filesize_str = self.__infos_dw.get('FILESIZE_FLAC', '0')
@@ -694,7 +696,7 @@ class EASY_DW:
                     raise TrackNotFound(f"Failed to process {self.__song_path}. Error: {str(e_decrypt)}") from e_decrypt
 
                 # Add Deezer-specific enhanced metadata and apply tags
-                from deezspot.deezloader.dee_api import API_GW
+                from deezspot.deezloader.deegw_api import API_GW
                 enhanced_metadata = add_deezer_enhanced_metadata(
                     self.__song_metadata,
                     self.__infos_dw,
@@ -733,7 +735,7 @@ class EASY_DW:
                             register_active_download(path_before_conversion)
 
                 # Apply tags using unified utility with Deezer enhancements
-                from deezspot.deezloader.dee_api import API_GW
+                from deezspot.deezloader.deegw_api import API_GW
                 enhanced_metadata = add_deezer_enhanced_metadata(
                     self.__song_metadata,
                     self.__infos_dw,
@@ -846,7 +848,7 @@ class EASY_DW:
                 self.__c_track.success = True
                 self.__write_episode()
                 # Apply tags using unified utility with Deezer enhancements
-                from deezspot.deezloader.dee_api import API_GW
+                from deezspot.deezloader.deegw_api import API_GW
                 enhanced_metadata = add_deezer_enhanced_metadata(
                     self.__song_metadata,
                     self.__infos_dw,
@@ -931,6 +933,7 @@ class DW_TRACK:
         self.__quality_download = self.__preferences.quality_download
 
     def dw(self) -> Track:
+        from deezspot.deezloader.deegw_api import API_GW
         infos_dw = API_GW.get_song_data(self.__ids)
 
         media = Download_JOB.check_sources(
@@ -991,6 +994,7 @@ class DW_ALBUM:
         self.__song_metadata = self._album_object_to_dict(album_obj)
 
     def dw(self) -> Album:
+        from deezspot.deezloader.deegw_api import API_GW
         # Report album initializing status
         album_obj = self.__preferences.json_data
         # Report album initialization status
@@ -1147,6 +1151,7 @@ class DW_PLAYLIST:
             callback_obj=callback_obj_init
         )
         
+        from deezspot.deezloader.deegw_api import API_GW
         infos_dw = API_GW.get_playlist_data(self.__ids)['data']
         playlist_name_sanitized = sanitize_name(playlist_obj.title)
         
@@ -1255,6 +1260,7 @@ class DW_EPISODE:
         self.__quality_download = preferences.quality_download
         
     def dw(self) -> Track:
+        from deezspot.deezloader.deegw_api import API_GW
         infos_dw = API_GW.get_episode_data(self.__ids)
         infos_dw['__TYPE__'] = 'episode'
         
