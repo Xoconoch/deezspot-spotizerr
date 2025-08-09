@@ -46,6 +46,7 @@ from deezspot.libutils.others_settings import (
 )
 from deezspot.libutils.logging_utils import ProgressReporter, logger, report_progress
 import requests
+from difflib import SequenceMatcher
 
 from deezspot.models.callback.callbacks import (
     trackCallbackObject,
@@ -395,12 +396,103 @@ class DeeLogin:
             logger.warning(msg)
             raise TrackNotFound(url=link_track, message=msg)
 
-        isrc_code = external_ids['isrc']
+        def _sim(a: str, b: str) -> float:
+            a = (a or '').strip().lower()
+            b = (b or '').strip().lower()
+            if not a or not b:
+                return 0.0
+            return SequenceMatcher(None, a, b).ratio()
+
+        spo_title = track_json.get('name', '')
+        spo_album_title = (track_json.get('album') or {}).get('name', '')
+        spo_tracknum = int(track_json.get('track_number') or 0)
+        spo_isrc = (external_ids.get('isrc') or '').upper()
+
+        # 1) Primary attempt: /track/isrc:CODE then validate with strict checks
         try:
-            return self.convert_isrc_to_dee_link_track(isrc_code)
-        except TrackNotFound as e:
-            logger.error(f"Failed to convert Spotify track {link_track} (ISRC: {isrc_code}) to Deezer link: {e.message}")
-            raise TrackNotFound(url=link_track, message=f"Failed to find Deezer equivalent for ISRC {isrc_code} from Spotify track {link_track}: {e.message}") from e
+            dz = API.get_track_json(f"isrc:{spo_isrc}")
+        except Exception:
+            dz = {}
+
+        def _track_ok(dz_json: dict) -> bool:
+            if not dz_json or not dz_json.get('id'):
+                return False
+            title_match = max(
+                _sim(spo_title, dz_json.get('title', '')),
+                _sim(spo_title, dz_json.get('title_short', '')),
+            )
+            album_match = _sim(spo_album_title, (dz_json.get('album') or {}).get('title', ''))
+            tn = int(dz_json.get('track_position') or dz_json.get('track_number') or 0)
+            return title_match >= 0.90 and album_match >= 0.90 and tn == spo_tracknum
+
+        if _track_ok(dz):
+            deezer_id = dz['id']
+            return f"https://www.deezer.com/track/{deezer_id}"
+
+        # 2) Fallback: search tracks by "title album" and validate, minimizing extra calls
+        query = f'"{spo_title} {spo_album_title}"'
+        try:
+            candidates = API.search_tracks_raw(query, limit=5)
+        except Exception:
+            candidates = []
+
+        for cand in candidates:
+            title_match = max(
+                _sim(spo_title, cand.get('title', '')),
+                _sim(spo_title, cand.get('title_short', '')),
+            )
+            album_match = _sim(spo_album_title, (cand.get('album') or {}).get('title', ''))
+            if title_match < 0.90 or album_match < 0.90:
+                continue
+            c_id = cand.get('id')
+            if not c_id:
+                continue
+            # Fetch details only for promising candidates to check track number and ISRC
+            try:
+                dzc = API.get_track_json(str(c_id))
+            except Exception:
+                continue
+            tn = int(dzc.get('track_position') or dzc.get('track_number') or 0)
+            if tn != spo_tracknum:
+                continue
+            if (dzc.get('isrc') or '').upper() != spo_isrc:
+                continue
+            return f"https://www.deezer.com/track/{dzc['id']}"
+
+        # 3) Last resort: search albums by album title; inspect tracks to find exact track number
+        try:
+            album_candidates = API.search_albums_raw(f'"{spo_album_title}"', limit=5)
+        except Exception:
+            album_candidates = []
+
+        for alb in album_candidates:
+            if _sim(spo_album_title, alb.get('title', '')) < 0.90:
+                continue
+            alb_id = alb.get('id')
+            if not alb_id:
+                continue
+            try:
+                # Use standardized album object to get detailed tracks (includes ISRC in IDs)
+                full_album = API.get_album(alb_id)
+            except Exception:
+                continue
+            # full_album.tracks is a list of trackAlbumObject with ids.isrc and track_number
+            for t in getattr(full_album, 'tracks', []) or []:
+                try:
+                    t_title = getattr(t, 'title', '')
+                    t_num = int(getattr(t, 'track_number', 0))
+                    t_isrc = (getattr(getattr(t, 'ids', None), 'isrc', '') or '').upper()
+                except Exception:
+                    continue
+                if t_num != spo_tracknum:
+                    continue
+                if _sim(spo_title, t_title) < 0.90:
+                    continue
+                if t_isrc != spo_isrc:
+                    continue
+                return f"https://www.deezer.com/track/{getattr(getattr(t, 'ids', None), 'deezer', '')}"
+
+        raise TrackNotFound(url=link_track, message=f"Failed to find Deezer equivalent for ISRC {spo_isrc} from Spotify track {link_track}")
 
     def convert_isrc_to_dee_link_track(self, isrc_code: str) -> str:
         if not isinstance(isrc_code, str) or not isrc_code:
@@ -432,71 +524,55 @@ class DeeLogin:
 
         spotify_album_data = Spo.get_album(ids)
 
-        # Method 1: Try UPC
-        try:
-            external_ids = spotify_album_data.get('external_ids')
-            if external_ids and 'upc' in external_ids:
-                upc_base = str(external_ids['upc']).lstrip('0')
-                if upc_base:
-                    logger.debug(f"Attempting Deezer album search with UPC: {upc_base}")
-                    try:
-                        deezer_album_obj = API.get_album(f"upc:{upc_base}")
-                        if deezer_album_obj and deezer_album_obj.type and deezer_album_obj.ids and deezer_album_obj.ids.deezer:
-                            link_dee = f"https://www.deezer.com/{deezer_album_obj.type}/{deezer_album_obj.ids.deezer}"
-                            logger.info(f"Found Deezer album via UPC: {link_dee}")
-                    except NoDataApi:
-                        logger.debug(f"No Deezer album found for UPC: {upc_base}")
-                    except Exception as e_upc_search:
-                        logger.warning(f"Error during Deezer API call for UPC {upc_base}: {e_upc_search}")
-            else:
-                logger.debug("No UPC found in Spotify data for album link conversion.")
-        except Exception as e_upc_block:
-            logger.error(f"Error processing UPC for album {link_album}: {e_upc_block}")
+        def _sim(a: str, b: str) -> float:
+            a = (a or '').strip().lower()
+            b = (b or '').strip().lower()
+            if not a or not b:
+                return 0.0
+            return SequenceMatcher(None, a, b).ratio()
 
-        # Method 2: Try ISRC if UPC failed
-        if not link_dee:
-            logger.debug(f"UPC method failed or skipped for {link_album}. Attempting ISRC method.")
+        spo_album_title = spotify_album_data.get('name', '')
+        # Prefer main artist name for better search, if available
+        spo_artists = spotify_album_data.get('artists') or []
+        spo_main_artist = (spo_artists[0].get('name') if spo_artists else '') or ''
+        external_ids = spotify_album_data.get('external_ids') or {}
+        spo_upc = str(external_ids.get('upc') or '').strip()
+
+        # 1) Primary attempt: /album/upc:CODE then validate title similarity
+        dz_album = {}
+        if spo_upc:
             try:
-                spotify_total_tracks = spotify_album_data.get('total_tracks')
-                spotify_tracks_items = spotify_album_data.get('tracks', {}).get('items', [])
+                dz_album = API.get_album_json(f"upc:{spo_upc}")
+            except Exception:
+                dz_album = {}
+            if dz_album.get('id') and _sim(spo_album_title, dz_album.get('title', '')) >= 0.90:
+                link_dee = f"https://www.deezer.com/album/{dz_album['id']}"
+                return link_dee
 
-                if not spotify_tracks_items:
-                    logger.warning(f"No track items in Spotify data for {link_album} to attempt ISRC lookup.")
-                else:
-                    for track_item in spotify_tracks_items:
-                        try:
-                            track_spotify_link = track_item.get('external_urls', {}).get('spotify')
-                            if not track_spotify_link: continue
+        # 2) Fallback: search albums by album title (+ main artist) and confirm UPC
+        q = f'"{spo_album_title}" {spo_main_artist}'.strip()
+        try:
+            candidates = API.search_albums_raw(q, limit=5)
+        except Exception:
+            candidates = []
 
-                            spotify_track_info = Spo.get_track(track_spotify_link)
-                            isrc_value = spotify_track_info.get('external_ids', {}).get('isrc')
-                            if not isrc_value: continue
-                            
-                            logger.debug(f"Attempting Deezer track search with ISRC: {isrc_value}")
-                            deezer_track_obj = API.get_track(f"isrc:{isrc_value}")
+        for cand in candidates:
+            if _sim(spo_album_title, cand.get('title', '')) < 0.90:
+                continue
+            c_id = cand.get('id')
+            if not c_id:
+                continue
+            try:
+                dzc = API.get_album_json(str(c_id))
+            except Exception:
+                continue
+            upc = str(dzc.get('upc') or '').strip()
+            if spo_upc and upc and spo_upc != upc:
+                continue
+            link_dee = f"https://www.deezer.com/album/{c_id}"
+            return link_dee
 
-                            if deezer_track_obj and deezer_track_obj.album and deezer_track_obj.album.ids.deezer:
-                                deezer_album_id = deezer_track_obj.album.ids.deezer
-                                full_deezer_album_obj = API.get_album(deezer_album_id)
-                                if (full_deezer_album_obj and
-                                    full_deezer_album_obj.total_tracks == spotify_total_tracks and
-                                    full_deezer_album_obj.type and full_deezer_album_obj.ids and full_deezer_album_obj.ids.deezer):
-                                    link_dee = f"https://www.deezer.com/{full_deezer_album_obj.type}/{full_deezer_album_obj.ids.deezer}"
-                                    logger.info(f"Found Deezer album via ISRC ({isrc_value}): {link_dee}")
-                                    break
-                        except NoDataApi:
-                            logger.debug(f"No Deezer track/album found for ISRC: {isrc_value}")
-                        except Exception as e_isrc_track_search:
-                            logger.warning(f"Error during Deezer search for ISRC {isrc_value}: {e_isrc_track_search}")
-                    if not link_dee:
-                        logger.warning(f"ISRC method completed for {link_album}, but no matching Deezer album found.")
-            except Exception as e_isrc_block:
-                logger.error(f"Error during ISRC processing block for {link_album}: {e_isrc_block}")
-
-        if not link_dee:
-            raise AlbumNotFound(f"Failed to convert Spotify album link {link_album} to a Deezer link after all attempts.")
-
-        return link_dee
+        raise AlbumNotFound(f"Failed to convert Spotify album link {link_album} to a Deezer link after all attempts.")
 
     def download_trackspo(
         self, link_track,
@@ -622,6 +698,7 @@ class DeeLogin:
             from deezspot.models.callback.playlist import (
                 artistTrackPlaylistObject, 
                 albumTrackPlaylistObject,
+                artistAlbumTrackPlaylistObject,
                 trackPlaylistObject
             )
             
@@ -643,7 +720,6 @@ class DeeLogin:
             # Process album artists
             album_artists = []
             if album_info.get('artists'):
-                from deezspot.models.callback.playlist import artistAlbumTrackPlaylistObject
                 album_artists = [
                     artistAlbumTrackPlaylistObject(
                         name=artist.get('name'),
@@ -918,7 +994,7 @@ class DeeLogin:
         episode = DW_EPISODE(preferences).dw()
 
         return episode
-    
+        
     def download_smart(
         self, link,
         output_dir=stock_output,

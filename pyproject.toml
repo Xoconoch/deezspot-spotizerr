@@ -14,15 +14,15 @@ authors = [
 ]
 
 dependencies = [
-    "mutagen",
-    "pycryptodome",
-    "requests",
-    "spotipy",
-    "tqdm",
-    "fastapi",
-    "uvicorn[standard]",
-    "spotipy-anon",
-    "librespot-spotizerr"
+    "mutagen==1.47.0",
+    "pycryptodome==3.23.0",
+    "requests==2.32.3",
+    "spotipy==2.25.1",
+    "tqdm==4.67.1",
+    "fastapi==0.116.1",
+    "uvicorn[standard]==0.35.0",
+    "spotipy-anon==1.5.2",
+    "librespot-spotizerr==0.2.10"
 ]
 
 [project.urls]

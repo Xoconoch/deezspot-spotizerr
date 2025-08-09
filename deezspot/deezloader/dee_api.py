@@ -64,6 +64,38 @@ class API:
 		return tracking(infos)
 
 	@classmethod
+	def get_track_json(cls, track_id_or_isrc: str) -> dict:
+		"""Return raw Deezer track JSON. Accepts numeric id or 'isrc:CODE'."""
+		url = f"{cls.__api_link}track/{track_id_or_isrc}"
+		return cls.__get_api(url)
+
+	@classmethod
+	def search_tracks_raw(cls, query: str, limit: int = 25) -> list[dict]:
+		"""Return raw track objects from search for more complete fields (readable, rank, etc.)."""
+		url = f"{cls.__api_link}search/track"
+		params = {"q": query, "limit": limit}
+		infos = cls.__get_api(url, params=params)
+		if infos.get('total', 0) == 0:
+			raise NoDataApi(query)
+		return infos.get('data', [])
+
+	@classmethod
+	def search_albums_raw(cls, query: str, limit: int = 25) -> list[dict]:
+		"""Return raw album objects from search to allow title similarity checks."""
+		url = f"{cls.__api_link}search/album"
+		params = {"q": query, "limit": limit}
+		infos = cls.__get_api(url, params=params)
+		if infos.get('total', 0) == 0:
+			raise NoDataApi(query)
+		return infos.get('data', [])
+
+	@classmethod
+	def get_album_json(cls, album_id_or_upc: str) -> dict:
+		"""Return raw album JSON. Accepts numeric id or 'upc:CODE'."""
+		url = f"{cls.__api_link}album/{album_id_or_upc}"
+		return cls.__get_api(url)
+
+	@classmethod
 	def get_album(cls, album_id):
 		url = f"{cls.__api_link}album/{album_id}"
 		infos = cls.__get_api(url)
