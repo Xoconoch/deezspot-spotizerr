@@ -266,7 +266,10 @@ class EASY_DW:
             self.__track_obj: trackCbObject = preferences.song_metadata
             
             # Convert it to the dictionary format needed for legacy functions
-            self.__song_metadata = self._track_object_to_dict(self.__track_obj)
+            artist_separator = getattr(preferences, 'artist_separator', '; ')
+            self.__song_metadata_dict = track_object_to_dict(self.__track_obj, source_type='deezer', artist_separator=artist_separator)
+            # Maintain legacy attribute expected elsewhere
+            self.__song_metadata = self.__song_metadata_dict
             self.__download_type = "track"
 
         self.__c_quality = qualities[self.__quality_download]
@@ -324,7 +327,8 @@ class EASY_DW:
         It intelligently finds the album information based on the download context.
         """
         # Use the unified metadata converter
-        metadata_dict = track_object_to_dict(track_obj, source_type='deezer')
+        artist_separator = getattr(self.__preferences, 'artist_separator', '; ')
+        metadata_dict = track_object_to_dict(track_obj, source_type='deezer', artist_separator=artist_separator)
         
         # Check for track_position and disk_number in the original API data
         # These might be directly available in the infos_dw dictionary for Deezer tracks
@@ -345,8 +349,9 @@ class EASY_DW:
         custom_dir_format = getattr(self.__preferences, 'custom_dir_format', None)
         custom_track_format = getattr(self.__preferences, 'custom_track_format', None)
         pad_tracks = getattr(self.__preferences, 'pad_tracks', True)
+        self.__song_metadata_dict['artist_separator'] = getattr(self.__preferences, 'artist_separator', '; ')
         self.__song_path = set_path(
-            self.__song_metadata,
+            self.__song_metadata_dict,
             self.__output_dir,
             self.__song_quality,
             self.__file_format,
@@ -360,7 +365,7 @@ class EASY_DW:
         custom_track_format = getattr(self.__preferences, 'custom_track_format', None)
         pad_tracks = getattr(self.__preferences, 'pad_tracks', True)
         self.__song_path = set_path(
-            self.__song_metadata,
+            self.__song_metadata_dict,
             self.__output_dir,
             self.__song_quality,
             self.__file_format,
@@ -953,7 +958,8 @@ class DW_ALBUM:
     def _album_object_to_dict(self, album_obj: albumCbObject) -> dict:
         """Converts an albumObject to a dictionary for tagging and path generation."""
         # Use the unified metadata converter
-        return album_object_to_dict(album_obj, source_type='deezer')
+        artist_separator = getattr(self.__preferences, 'artist_separator', '; ')
+        return album_object_to_dict(album_obj, source_type='deezer', artist_separator=artist_separator)
 
     def _track_object_to_dict(self, track_obj: any, album_obj: albumCbObject) -> dict:
         """Converts a track object to a dictionary with album context."""
@@ -973,10 +979,12 @@ class DW_ALBUM:
                 genres=getattr(track_obj, 'genres', [])
             )
             # Use the unified metadata converter
-            return track_object_to_dict(full_track, source_type='deezer')
+            artist_separator = getattr(self.__preferences, 'artist_separator', '; ')
+            return track_object_to_dict(full_track, source_type='deezer', artist_separator=artist_separator)
         else:
             # Use the unified metadata converter
-            return track_object_to_dict(track_obj, source_type='deezer')
+            artist_separator = getattr(self.__preferences, 'artist_separator', '; ')
+            return track_object_to_dict(track_obj, source_type='deezer', artist_separator=artist_separator)
 
     def __init__(
         self,
@@ -992,6 +1000,7 @@ class DW_ALBUM:
         self.__recursive_quality = self.__preferences.recursive_quality
         album_obj: albumCbObject = self.__preferences.song_metadata
         self.__song_metadata = self._album_object_to_dict(album_obj)
+        self.__song_metadata['artist_separator'] = getattr(self.__preferences, 'artist_separator', '; ')
 
     def dw(self) -> Album:
         from deezspot.deezloader.deegw_api import API_GW
@@ -1139,7 +1148,8 @@ class DW_PLAYLIST:
 
     def _track_object_to_dict(self, track_obj: any) -> dict:
         # Use the unified metadata converter
-        return track_object_to_dict(track_obj, source_type='deezer')
+        artist_separator = getattr(self.__preferences, 'artist_separator', '; ')
+        return track_object_to_dict(track_obj, source_type='deezer', artist_separator=artist_separator)
 
     def dw(self) -> Playlist:
         playlist_obj: playlistCbObject = self.__preferences.json_data

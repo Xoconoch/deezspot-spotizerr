@@ -104,7 +104,13 @@ class EASY_DW:
         self.__link = preferences.link
         self.__output_dir = preferences.output_dir
         self.__song_metadata = preferences.song_metadata
-        self.__song_metadata_dict = _track_object_to_dict(self.__song_metadata)
+        # Convert song metadata to dict with configured artist separator
+        artist_separator = getattr(preferences, 'artist_separator', '; ')
+        if parent == 'album' and hasattr(self.__song_metadata, 'album'):
+            # When iterating album tracks later we will still need the separator, but for initial dict, use track conversion
+            self.__song_metadata_dict = track_object_to_dict(self.__song_metadata, source_type='spotify', artist_separator=artist_separator)
+        else:
+            self.__song_metadata_dict = track_object_to_dict(self.__song_metadata, source_type='spotify', artist_separator=artist_separator)
         self.__not_interface = preferences.not_interface
         self.__quality_download = preferences.quality_download or "NORMAL"
         self.__recursive_download = preferences.recursive_download
@@ -136,6 +142,8 @@ class EASY_DW:
         custom_dir_format = getattr(self.__preferences, 'custom_dir_format', None)
         custom_track_format = getattr(self.__preferences, 'custom_track_format', None)
         pad_tracks = getattr(self.__preferences, 'pad_tracks', True)
+        # Ensure the separator is available to formatting utils for indexed placeholders
+        self.__song_metadata_dict['artist_separator'] = getattr(self.__preferences, 'artist_separator', '; ')
         self.__song_path = set_path(
             self.__song_metadata_dict,
             self.__output_dir,
@@ -150,6 +158,7 @@ class EASY_DW:
         custom_dir_format = getattr(self.__preferences, 'custom_dir_format', None)
         custom_track_format = getattr(self.__preferences, 'custom_track_format', None)
         pad_tracks = getattr(self.__preferences, 'pad_tracks', True)
+        self.__song_metadata_dict['artist_separator'] = getattr(self.__preferences, 'artist_separator', '; ')
         self.__song_path = set_path(
             self.__song_metadata_dict,
             self.__output_dir,
@@ -200,7 +209,7 @@ class EASY_DW:
             parent_info = {
                 "type": "album",
                 "title": album_meta.title,
-                "artist": "; ".join([a.name for a in album_meta.artists]),
+                "artist": getattr(self.__preferences, 'artist_separator', '; ').join([a.name for a in album_meta.artists]),
                 "total_tracks": total_tracks_val,
                 "url": f"https://open.spotify.com/album/{album_meta.ids.spotify if album_meta.ids else ''}"
             }
@@ -313,7 +322,7 @@ class EASY_DW:
 
         except Exception as e:
             song_title = self.__song_metadata.title
-            artist_name = "; ".join([a.name for a in self.__song_metadata.artists])
+            artist_name = getattr(self.__preferences, 'artist_separator', '; ').join([a.name for a in self.__song_metadata.artists])
             error_message = f"Download failed for '{song_title}' by '{artist_name}' (URL: {self.__link}). Original error: {str(e)}"
             logger.error(error_message)
             traceback.print_exc()
@@ -334,7 +343,7 @@ class EASY_DW:
         # This handles cases where download_try didn't raise an exception but self.__c_track.success is still False.
         if hasattr(self, '_EASY_DW__c_track') and self.__c_track and not self.__c_track.success:
             song_title = self.__song_metadata.title
-            artist_name = "; ".join([a.name for a in self.__song_metadata.artists])
+            artist_name = getattr(self.__preferences, 'artist_separator', '; ').join([a.name for a in self.__song_metadata.artists])
             original_error_msg = getattr(self.__c_track, 'error_message', "Download failed for an unspecified reason after attempt.")
             error_msg_template = "Cannot download '{title}' by '{artist}'. Reason: {reason}"
             final_error_msg = error_msg_template.format(title=song_title, artist=artist_name, reason=original_error_msg)
@@ -362,7 +371,7 @@ class EASY_DW:
     def download_try(self) -> Track:
         current_title = self.__song_metadata.title
         current_album = self.__song_metadata.album.title if self.__song_metadata.album else ''
-        current_artist = "; ".join([a.name for a in self.__song_metadata.artists])
+        current_artist = getattr(self.__preferences, 'artist_separator', '; ').join([a.name for a in self.__song_metadata.artists])
 
         # Call the new check_track_exists function from skip_detection.py
         # It needs: original_song_path, title, album, convert_to, logger
@@ -571,7 +580,7 @@ class EASY_DW:
                         os.remove(self.__song_path)
                     # Add track info to exception    
                     track_name = self.__song_metadata.title
-                    artist_name = "; ".join([a.name for a in self.__song_metadata.artists])
+                    artist_name = getattr(self.__preferences, 'artist_separator', '; ').join([a.name for a in self.__song_metadata.artists])
                     final_error_msg = f"Maximum retry limit reached for '{track_name}' by '{artist_name}' (local: {max_retries}, global: {GLOBAL_MAX_RETRIES}). Last error: {str(e)}"
                     # Store error on track object
                     if hasattr(self, '_EASY_DW__c_track') and self.__c_track:
@@ -736,7 +745,7 @@ class EASY_DW:
                     if os.path.exists(self.__song_path):
                         os.remove(self.__song_path) # Clean up partial file
                     track_name = self.__song_metadata.title
-                    artist_name = "; ".join([a.name for a in self.__song_metadata.artists])
+                    artist_name = getattr(self.__preferences, 'artist_separator', '; ').join([a.name for a in self.__song_metadata.artists])
                     final_error_msg = f"Maximum retry limit reached for '{track_name}' by '{artist_name}' (local: {max_retries}, global: {GLOBAL_MAX_RETRIES}). Last error: {str(e)}"
                     if hasattr(self, '_EASY_DW__c_episode') and self.__c_episode:
                         self.__c_episode.success = False
@@ -788,7 +797,7 @@ class EASY_DW:
                                 pass
                         unregister_active_download(self.__song_path)
                         episode_title = self.__song_metadata.title
-                        artist_name = "; ".join([a.name for a in self.__song_metadata.artists])
+                        artist_name = getattr(self.__preferences, 'artist_separator', '; ').join([a.name for a in self.__song_metadata.artists])
                         final_error_msg = f"Error during real-time download for episode '{episode_title}' by '{artist_name}' (URL: {self.__link}). Error: {str(e_realtime)}"
                         logger.error(final_error_msg)
                         if hasattr(self, '_EASY_DW__c_episode') and self.__c_episode:
@@ -814,7 +823,7 @@ class EASY_DW:
                                 pass
                         unregister_active_download(self.__song_path)
                         episode_title = self.__song_metadata.title
-                        artist_name = "; ".join([a.name for a in self.__song_metadata.artists])
+                        artist_name = getattr(self.__preferences, 'artist_separator', '; ').join([a.name for a in self.__song_metadata.artists])
                         final_error_msg = f"Error during standard download for episode '{episode_title}' by '{artist_name}' (URL: {self.__link}). Error: {str(e_standard)}"
                         logger.error(final_error_msg)
                         if hasattr(self, '_EASY_DW__c_episode') and self.__c_episode:
@@ -953,7 +962,8 @@ class DW_ALBUM:
         album.upc = album_obj.ids.upc
         tracks = album.tracks
         album.md5_image = self.__ids
-        album.tags = _album_object_to_dict(self.__album_metadata) # For top-level album tags if needed
+        album.tags = album_object_to_dict(self.__album_metadata, source_type='spotify', artist_separator=getattr(self.__preferences, 'artist_separator', '; ')) # For top-level album tags if needed
+        album.tags['artist_separator'] = getattr(self.__preferences, 'artist_separator', '; ')
         
         album_base_directory = get_album_directory(
             album.tags,

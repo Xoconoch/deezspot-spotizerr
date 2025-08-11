@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import re
+from unicodedata import normalize
 from os import makedirs
 from datetime import datetime
 from urllib.parse import urlparse
@@ -43,6 +44,11 @@ def __check_dir(directory):
 def sanitize_name(string, max_length=200):
     """Sanitize a string for use as a filename or directory name.
     
+    This version maps filesystem-conflicting ASCII characters to Unicode
+    lookalikes (mostly fullwidth forms) rather than dropping or replacing
+    with ASCII fallbacks. This preserves readability while avoiding
+    path-separator or Windows-invalid characters.
+    
     Args:
         string: The string to sanitize
         max_length: Maximum length for the resulting string
@@ -55,21 +61,23 @@ def sanitize_name(string, max_length=200):
         
     # Convert to string if not already
     string = str(string)
-    
-    # Enhance character replacement for filenames
+
+    # Map invalid/reserved characters to Unicode fullwidth or similar lookalikes
+    # to avoid filesystem conflicts while keeping readability.
+    # Windows-invalid: < > : " / \ | ? * and control chars
     replacements = {
-        "\\": "-",  # Backslash to hyphen
-        "/": "-",   # Forward slash to hyphen
-        ":": "-",   # Colon to hyphen
-        "*": "+",   # Asterisk to plus
-        "?": "",     # Question mark removed
-        "\"": "'",  # Double quote to single quote
-        "<": "[",   # Less than to open bracket
-        ">": "]",   # Greater than to close bracket
-        "|": "-",   # Pipe to hyphen
-        "&": "and", # Ampersand to 'and'
-        "$": "s",   # Dollar to 's'
-        ";": ",",   # Semicolon to comma
+        "\\": "＼",  # U+FF3C FULLWIDTH REVERSE SOLIDUS
+        "/": "／",   # U+FF0F FULLWIDTH SOLIDUS
+        ":": "：",   # U+FF1A FULLWIDTH COLON
+        "*": "＊",   # U+FF0A FULLWIDTH ASTERISK
+        "?": "？",   # U+FF1F FULLWIDTH QUESTION MARK
+        "\"": "＂",  # U+FF02 FULLWIDTH QUOTATION MARK
+        "<": "＜",   # U+FF1C FULLWIDTH LESS-THAN SIGN
+        ">": "＞",   # U+FF1E FULLWIDTH GREATER-THAN SIGN
+        "|": "｜",   # U+FF5C FULLWIDTH VERTICAL LINE
+        "&": "＆",   # U+FF06 FULLWIDTH AMPERSAND
+        "$": "＄",   # U+FF04 FULLWIDTH DOLLAR SIGN
+        ";": "；",   # U+FF1B FULLWIDTH SEMICOLON
         "\t": " ",  # Tab to space
         "\n": " ",  # Newline to space
         "\r": " ",  # Carriage return to space
@@ -78,26 +86,30 @@ def sanitize_name(string, max_length=200):
     
     for old, new in replacements.items():
         string = string.replace(old, new)
-    
+
     # Remove any other non-printable characters
     string = ''.join(char for char in string if char.isprintable())
-    
+
     # Remove leading/trailing whitespace
     string = string.strip()
-    
+
     # Replace multiple spaces with a single space
     string = re.sub(r'\s+', ' ', string)
-    
+
     # Truncate if too long
     if len(string) > max_length:
         string = string[:max_length]
         
     # Ensure we don't end with a dot or space (can cause issues in some filesystems)
     string = string.rstrip('. ')
-    
+
     # Provide a fallback for empty strings
     if not string:
         string = "Unknown"
+
+    # Normalize to NFC to keep composed characters stable but avoid
+    # compatibility decomposition that might revert fullwidth mappings.
+    string = normalize('NFC', string)
         
     return string
 
@@ -127,6 +139,11 @@ def apply_custom_format(format_str, metadata: dict, pad_tracks=True) -> str:
     def replacer(match):
         full_key = match.group(1)  # e.g., "artist", "ar_album_1"
 
+        # Allow custom artist/album-artist separator to be provided via metadata
+        separator = metadata.get('artist_separator', ';')
+        if not isinstance(separator, str) or separator == "":
+            separator = ';'
+
         # Check for specific indexed placeholders: artist_INDEX or ar_album_INDEX
         # Allows %artist_1%, %ar_album_1%, etc.
         indexed_artist_match = re.fullmatch(r'(artist|ar_album)_(\d+)', full_key)
@@ -143,8 +160,8 @@ def apply_custom_format(format_str, metadata: dict, pad_tracks=True) -> str:
             items = []
 
             if isinstance(raw_value, str):
-                # Split semicolon-separated strings and strip whitespace
-                items = [item.strip() for item in raw_value.split(';') if item.strip()]
+                # Split by provided separator and strip whitespace
+                items = [item.strip() for item in raw_value.split(separator) if item.strip()]
             elif isinstance(raw_value, list):
                 # Convert all items to string, strip whitespace
                 items = [str(item).strip() for item in raw_value if str(item).strip()]
@@ -193,13 +210,14 @@ def __get_dir(song_metadata, output_dir, custom_dir_format=None, pad_tracks=True
         __check_dir(output_dir)
         return output_dir
 
-    # Apply the custom format string.
-    # pad_tracks is passed along in case 'tracknum' or 'discnum' are used in dir format.
-    formatted_path_segment = apply_custom_format(custom_dir_format, song_metadata, pad_tracks)
-    
-    # Sanitize each component of the formatted path segment
+    # Apply formatting per path component so only slashes from the format
+    # create directories; slashes from data are sanitized inside components.
+    format_parts = custom_dir_format.split("/")
+    formatted_parts = [
+        apply_custom_format(part, song_metadata, pad_tracks) for part in format_parts
+    ]
     sanitized_path_segment = "/".join(
-        sanitize_name(part) for part in formatted_path_segment.split("/")
+        sanitize_name(part) for part in formatted_parts
     )
 
     # Join with the base output directory

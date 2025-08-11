@@ -97,7 +97,8 @@ class SpoLogin:
         convert_to=None,
         bitrate=None,
         save_cover=stock_save_cover,
-        market: list[str] | None = stock_market
+        market: list[str] | None = stock_market,
+        artist_separator: str = "; "
     ) -> Track:
         song_metadata = None
         try:
@@ -108,7 +109,7 @@ class SpoLogin:
             if song_metadata is None:
                 raise Exception(f"Could not retrieve metadata for track {link_track}. It might not be available or an API error occurred.")
 
-            logger.info(f"Starting download for track: {song_metadata.title} - {'; '.join([a.name for a in song_metadata.artists])}")
+            logger.info(f"Starting download for track: {song_metadata.title} - {artist_separator.join([a.name for a in song_metadata.artists])}")
 
             preferences = Preferences()
             preferences.real_time_dl = real_time_dl
@@ -135,6 +136,7 @@ class SpoLogin:
                 preferences.bitrate = bitrate
             preferences.save_cover = save_cover
             preferences.market = market
+            preferences.artist_separator = artist_separator
 
             track = DW_TRACK(preferences).dw()
 
@@ -179,7 +181,8 @@ class SpoLogin:
         convert_to=None,
         bitrate=None,
         save_cover=stock_save_cover,
-        market: list[str] | None = stock_market
+        market: list[str] | None = stock_market,
+        artist_separator: str = "; "
     ) -> Album:
         try:
             link_is_valid(link_album)
@@ -192,7 +195,7 @@ class SpoLogin:
             if song_metadata is None:
                 raise Exception(f"Could not process album metadata for {link_album}. It might not be available in the specified market(s) or an API error occurred.")
 
-            logger.info(f"Starting download for album: {song_metadata.title} - {'; '.join([a.name for a in song_metadata.artists])}")
+            logger.info(f"Starting download for album: {song_metadata.title} - {artist_separator.join([a.name for a in song_metadata.artists])}")
 
             preferences = Preferences()
             preferences.real_time_dl = real_time_dl
@@ -221,6 +224,7 @@ class SpoLogin:
                 preferences.bitrate = bitrate
             preferences.save_cover = save_cover
             preferences.market = market
+            preferences.artist_separator = artist_separator
 
             album = DW_ALBUM(preferences).dw()
 
@@ -251,7 +255,8 @@ class SpoLogin:
         convert_to=None,
         bitrate=None,
         save_cover=stock_save_cover,
-        market: list[str] | None = stock_market
+        market: list[str] | None = stock_market,
+        artist_separator: str = "; "
     ) -> Playlist:
         try:
             link_is_valid(link_playlist)
@@ -327,6 +332,7 @@ class SpoLogin:
                 preferences.bitrate = bitrate
             preferences.save_cover = save_cover
             preferences.market = market
+            preferences.artist_separator = artist_separator
             
             playlist = DW_PLAYLIST(preferences).dw()
 
@@ -356,7 +362,8 @@ class SpoLogin:
         convert_to=None,
         bitrate=None,
         save_cover=stock_save_cover,
-        market: list[str] | None = stock_market
+        market: list[str] | None = stock_market,
+        artist_separator: str = "; "
     ) -> Episode:
         try:
             link_is_valid(link_episode)
@@ -396,6 +403,7 @@ class SpoLogin:
                 preferences.bitrate = bitrate
             preferences.save_cover = save_cover
             preferences.market = market
+            preferences.artist_separator = artist_separator
 
             episode = DW_EPISODE(preferences).dw()
 
@@ -428,7 +436,8 @@ class SpoLogin:
         convert_to=None,
         bitrate=None,
         market: list[str] | None = stock_market,
-        save_cover=stock_save_cover
+        save_cover=stock_save_cover,
+        artist_separator: str = "; "
     ):
         """
         Download all albums (or a subset based on album_type and limit) from an artist.
@@ -468,7 +477,8 @@ class SpoLogin:
                     convert_to=convert_to,
                     bitrate=bitrate,
                     market=market,
-                    save_cover=save_cover
+                    save_cover=save_cover,
+                    artist_separator=artist_separator
                 )
                 downloaded_albums.append(downloaded_album)
             return downloaded_albums
@@ -495,7 +505,8 @@ class SpoLogin:
         convert_to=None,
         bitrate=None,
         save_cover=stock_save_cover,
-        market: list[str] | None = stock_market
+        market: list[str] | None = stock_market,
+        artist_separator: str = "; "
     ) -> Smart:
         try:
             link_is_valid(link)
@@ -528,7 +539,8 @@ class SpoLogin:
                     convert_to=convert_to,
                     bitrate=bitrate,
                     save_cover=save_cover,
-                    market=market
+                    market=market,
+                    artist_separator=artist_separator
                 )
                 smart.type = "track"
                 smart.track = track
@@ -554,7 +566,8 @@ class SpoLogin:
                     convert_to=convert_to,
                     bitrate=bitrate,
                     save_cover=save_cover,
-                    market=market
+                    market=market,
+                    artist_separator=artist_separator
                 )
                 smart.type = "album"
                 smart.album = album
@@ -580,7 +593,8 @@ class SpoLogin:
                     convert_to=convert_to,
                     bitrate=bitrate,
                     save_cover=save_cover,
-                    market=market
+                    market=market,
+                    artist_separator=artist_separator
                 )
                 smart.type = "playlist"
                 smart.playlist = playlist
@@ -605,7 +619,8 @@ class SpoLogin:
                     convert_to=convert_to,
                     bitrate=bitrate,
                     save_cover=save_cover,
-                    market=market
+                    market=market,
+                    artist_separator=artist_separator
                 )
                 smart.type = "episode"
                 smart.episode = episode

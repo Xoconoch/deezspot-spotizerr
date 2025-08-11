@@ -108,7 +108,7 @@ def _get_best_image_url(images: Any, source_type: str) -> Optional[str]:
     return None
 
 
-def track_object_to_dict(track_obj: Any, source_type: Optional[str] = None) -> Dict[str, Any]:
+def track_object_to_dict(track_obj: Any, source_type: Optional[str] = None, artist_separator: str = "; ") -> Dict[str, Any]:
     """
     Convert a track object to a dictionary format for tagging.
     Supports both Spotify and Deezer track objects.
@@ -116,6 +116,7 @@ def track_object_to_dict(track_obj: Any, source_type: Optional[str] = None) -> D
     Args:
         track_obj: Track object from Spotify or Deezer API
         source_type: Optional source type ('spotify' or 'deezer'). If None, auto-detected.
+        artist_separator: Separator string for joining multiple artists
         
     Returns:
         Dictionary with standardized metadata tags
@@ -142,7 +143,7 @@ def track_object_to_dict(track_obj: Any, source_type: Optional[str] = None) -> D
     
     # Artist information
     if hasattr(track_obj, 'artists') and track_obj.artists:
-        tags['artist'] = "; ".join([getattr(artist, 'name', '') for artist in track_obj.artists])
+        tags['artist'] = artist_separator.join([getattr(artist, 'name', '') for artist in track_obj.artists])
     else:
         tags['artist'] = ''
     
@@ -157,7 +158,7 @@ def track_object_to_dict(track_obj: Any, source_type: Optional[str] = None) -> D
         
         # Album artists
         if hasattr(album, 'artists') and album.artists:
-            tags['ar_album'] = "; ".join([getattr(artist, 'name', '') for artist in album.artists])
+            tags['ar_album'] = artist_separator.join([getattr(artist, 'name', '') for artist in album.artists])
         else:
             tags['ar_album'] = ''
             
@@ -210,7 +211,7 @@ def track_object_to_dict(track_obj: Any, source_type: Optional[str] = None) -> D
     return tags
 
 
-def album_object_to_dict(album_obj: Any, source_type: Optional[str] = None) -> Dict[str, Any]:
+def album_object_to_dict(album_obj: Any, source_type: Optional[str] = None, artist_separator: str = "; ") -> Dict[str, Any]:
     """
     Convert an album object to a dictionary format for tagging.
     Supports both Spotify and Deezer album objects.
@@ -218,6 +219,7 @@ def album_object_to_dict(album_obj: Any, source_type: Optional[str] = None) -> D
     Args:
         album_obj: Album object from Spotify or Deezer API
         source_type: Optional source type ('spotify' or 'deezer'). If None, auto-detected.
+        artist_separator: Separator string for joining multiple album artists
         
     Returns:
         Dictionary with standardized metadata tags
@@ -236,7 +238,7 @@ def album_object_to_dict(album_obj: Any, source_type: Optional[str] = None) -> D
     
     # Album artists
     if hasattr(album_obj, 'artists') and album_obj.artists:
-        tags['ar_album'] = "; ".join([getattr(artist, 'name', '') for artist in album_obj.artists])
+        tags['ar_album'] = artist_separator.join([getattr(artist, 'name', '') for artist in album_obj.artists])
     else:
         tags['ar_album'] = ''
         

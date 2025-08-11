@@ -125,7 +125,8 @@ class DeeLogin:
         bitrate=None,
         save_cover=stock_save_cover,
         market=stock_market,
-        playlist_context=None
+        playlist_context=None,
+        artist_separator: str = "; "
     ) -> Track:
 
         link_is_valid(link_track)
@@ -192,6 +193,7 @@ class DeeLogin:
         preferences.bitrate = bitrate
         preferences.save_cover = save_cover
         preferences.market = market
+        preferences.artist_separator = artist_separator
 
         if playlist_context:
             preferences.json_data = playlist_context['json_data']
@@ -226,7 +228,8 @@ class DeeLogin:
         bitrate=None,
         save_cover=stock_save_cover,
         market=stock_market,
-        playlist_context=None
+        playlist_context=None,
+        artist_separator: str = "; "
     ) -> Album:
 
         link_is_valid(link_album)
@@ -273,6 +276,7 @@ class DeeLogin:
         preferences.bitrate = bitrate
         preferences.save_cover = save_cover
         preferences.market = market
+        preferences.artist_separator = artist_separator
 
         if playlist_context:
             preferences.json_data = playlist_context['json_data']
@@ -305,7 +309,8 @@ class DeeLogin:
         convert_to=None,
         bitrate=None,
         save_cover=stock_save_cover,
-        market=stock_market
+        market=stock_market,
+        artist_separator: str = "; "
     ) -> Playlist:
 
         link_is_valid(link_playlist)
@@ -339,6 +344,7 @@ class DeeLogin:
         preferences.bitrate = bitrate
         preferences.save_cover = save_cover
         preferences.market = market
+        preferences.artist_separator = artist_separator
 
         playlist = DW_PLAYLIST(preferences).dw()
 
@@ -591,7 +597,8 @@ class DeeLogin:
         bitrate=None,
         save_cover=stock_save_cover,
         market=stock_market,
-        playlist_context=None
+        playlist_context=None,
+        artist_separator: str = "; "
     ) -> Track:
 
         link_dee = self.convert_spoty_to_dee_link_track(link_track)
@@ -613,7 +620,8 @@ class DeeLogin:
             bitrate=bitrate,
             save_cover=save_cover,
             market=market,
-            playlist_context=playlist_context
+            playlist_context=playlist_context,
+            artist_separator=artist_separator
         )
 
         return track
@@ -636,7 +644,8 @@ class DeeLogin:
         bitrate=None,
         save_cover=stock_save_cover,
         market=stock_market,
-        playlist_context=None
+        playlist_context=None,
+        artist_separator: str = "; "
     ) -> Album:
 
         link_dee = self.convert_spoty_to_dee_link_album(link_album)
@@ -656,7 +665,8 @@ class DeeLogin:
             bitrate=bitrate,
             save_cover=save_cover,
             market=market,
-            playlist_context=playlist_context
+            playlist_context=playlist_context,
+            artist_separator=artist_separator
         )
 
         return album
@@ -678,7 +688,8 @@ class DeeLogin:
         convert_to=None,
         bitrate=None,
         save_cover=stock_save_cover,
-        market=stock_market
+        market=stock_market,
+        artist_separator: str = "; "
     ) -> Playlist:
 
         link_is_valid(link_playlist)
@@ -821,7 +832,8 @@ class DeeLogin:
                     custom_track_format=custom_track_format, pad_tracks=pad_tracks,
                     initial_retry_delay=initial_retry_delay, retry_delay_increase=retry_delay_increase,
                     max_retries=max_retries, convert_to=convert_to, bitrate=bitrate,
-                    save_cover=save_cover, market=market, playlist_context=playlist_context
+                    save_cover=save_cover, market=market, playlist_context=playlist_context,
+                    artist_separator=artist_separator
                 )
                 tracks.append(downloaded_track)
                 
@@ -898,7 +910,8 @@ class DeeLogin:
         convert_to=None,
         bitrate=None,
         save_cover=stock_save_cover,
-        market=stock_market
+        market=stock_market,
+        artist_separator: str = "; "
     ) -> Track:
 
         query = f"track:{song} artist:{artist}"
@@ -928,7 +941,8 @@ class DeeLogin:
             convert_to=convert_to,
             bitrate=bitrate,
             save_cover=save_cover,
-            market=market
+            market=market,
+            artist_separator=artist_separator
         )
 
         return track
@@ -950,7 +964,8 @@ class DeeLogin:
         convert_to=None,
         bitrate=None,
         save_cover=stock_save_cover,
-        market=stock_market
+        market=stock_market,
+        artist_separator: str = "; "
     ) -> Episode:
         
         logger.warning("Episode download logic is not fully refactored and might not work as expected with new reporting.")
@@ -990,6 +1005,7 @@ class DeeLogin:
         preferences.save_cover = save_cover
         preferences.is_episode = True
         preferences.market = market
+        preferences.artist_separator = artist_separator
 
         episode = DW_EPISODE(preferences).dw()
 
@@ -1012,7 +1028,8 @@ class DeeLogin:
         convert_to=None,
         bitrate=None,
         save_cover=stock_save_cover,
-        market=stock_market
+        market=stock_market,
+        artist_separator: str = "; "
     ) -> Smart:
 
         link_is_valid(link)
@@ -1040,7 +1057,7 @@ class DeeLogin:
                 custom_track_format=custom_track_format, pad_tracks=pad_tracks,
                 initial_retry_delay=initial_retry_delay, retry_delay_increase=retry_delay_increase,
                 max_retries=max_retries, convert_to=convert_to, bitrate=bitrate,
-                save_cover=save_cover, market=market
+                save_cover=save_cover, market=market, artist_separator=artist_separator
             )
             smart.type = "track"
             smart.track = track
@@ -1055,7 +1072,7 @@ class DeeLogin:
                 pad_tracks=pad_tracks, initial_retry_delay=initial_retry_delay,
                 retry_delay_increase=retry_delay_increase, max_retries=max_retries,
                 convert_to=convert_to, bitrate=bitrate, save_cover=save_cover,
-                market=market
+                market=market, artist_separator=artist_separator
             )
             smart.type = "album"
             smart.album = album
@@ -1070,7 +1087,7 @@ class DeeLogin:
                 pad_tracks=pad_tracks, initial_retry_delay=initial_retry_delay,
                 retry_delay_increase=retry_delay_increase, max_retries=max_retries,
                 convert_to=convert_to, bitrate=bitrate, save_cover=save_cover,
-                market=market
+                market=market, artist_separator=artist_separator
             )
             smart.type = "playlist"
             smart.playlist = playlist
