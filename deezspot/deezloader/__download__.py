@@ -477,13 +477,26 @@ class EASY_DW:
                 if self.__c_track.success :
                     parent_obj, current_track_val, total_tracks_val = self._get_parent_context()
                     
-                    done_status = doneObject(ids=self.__track_obj.ids, convert_to=self.__convert_to)
+                    # Compute final path and quality label for Deezer
+                    final_path_val = getattr(self.__c_track, 'song_path', None)
+                    # Deezer quality is directly the selected key or final file format
+                    dz_quality_key = self.__quality_download
+                    download_quality_val = dz_quality_key if dz_quality_key else (self.__c_track.file_format.upper().lstrip('.') if getattr(self.__c_track, 'file_format', None) else None)
+
+                    done_status = doneObject(
+                        ids=self.__track_obj.ids,
+                        convert_to=self.__convert_to,
+                        final_path=final_path_val,
+                        download_quality=download_quality_val
+                    )
                     
                     if self.__parent is None:
                         summary = summaryObject(
                             successful_tracks=[self.__track_obj],
-                            total_successful=1
+                            total_successful=1,
                         )
+                        summary.final_path = final_path_val
+                        summary.download_quality = download_quality_val
                         done_status.summary = summary
                         
                     callback_obj = trackCallbackObject(
@@ -1287,7 +1300,7 @@ class DW_PLAYLIST:
             zip_name = f"{self.__output_dir}/{playlist_obj.title} [playlist {self.__ids}]"
             create_zip(tracks, zip_name=zip_name)
             playlist.zip_path = zip_name
-
+ 
         summary_obj = summaryObject(
             successful_tracks=successful_tracks_cb,
             skipped_tracks=skipped_tracks_cb,
@@ -1296,6 +1309,9 @@ class DW_PLAYLIST:
             total_skipped=len(skipped_tracks_cb),
             total_failed=len(failed_tracks_cb)
         )
+        
+        # Attach m3u path to summary
+        summary_obj.m3u_path = m3u_path
         
         status_obj_done = doneObject(ids=playlist_obj.ids, summary=summary_obj)
         callback_obj_done = playlistCallbackObject(playlist=playlist_obj, status_info=status_obj_done)

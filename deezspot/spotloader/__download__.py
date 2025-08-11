@@ -674,15 +674,41 @@ class EASY_DW:
                 total_skipped=len(skipped_track_list),
                 total_failed=0
             )
+            # Enrich summary with final path and quality
+            try:
+                final_path_val = getattr(self.__c_track, 'song_path', None)
+            except Exception:
+                final_path_val = None
+            quality_key_single = self.__quality_download
+            sp_quality_map_single = {
+                'NORMAL': 'OGG_96',
+                'HIGH': 'OGG_160',
+                'VERY_HIGH': 'OGG_320'
+            }
+            summary_obj.final_path = final_path_val
+            summary_obj.download_quality = sp_quality_map_single.get(quality_key_single, 'OGG')
 
         # Report track done status
+        # Compute final path and quality label
+        final_path_val = getattr(self.__c_track, 'song_path', None)
+        # Map Spotify quality to OGG bitrate label
+        quality_key = self.__quality_download if hasattr(self, '_EASY_DW__quality_download') else getattr(self, '_EASY_DW__quality_download', None)
+        quality_key = self.__quality_download if quality_key is None else quality_key
+        sp_quality_map = {
+            'NORMAL': 'OGG_96',
+            'HIGH': 'OGG_160',
+            'VERY_HIGH': 'OGG_320'
+        }
+        download_quality_val = sp_quality_map.get(quality_key, 'OGG')
         report_track_done(
             track_obj=track_obj,
             preferences=self.__preferences,
             summary=summary_obj,
             parent_obj=parent_obj,
             current_track=current_track_val,
-            total_tracks=total_tracks_val
+            total_tracks=total_tracks_val,
+            final_path=final_path_val,
+            download_quality=download_quality_val
         )
 
         if hasattr(self, '_EASY_DW__c_track') and self.__c_track and self.__c_track.success:
@@ -1184,7 +1210,8 @@ class DW_PLAYLIST:
             total_failed=len(failed_tracks_cb)
         )
         
-        report_playlist_done(playlist_obj_for_cb, summary_obj)
+        # Include m3u path in summary and callback
+        report_playlist_done(playlist_obj_for_cb, summary_obj, m3u_path=m3u_path)
         
         return playlist
 

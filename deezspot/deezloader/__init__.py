@@ -871,6 +871,9 @@ class DeeLogin:
                 f"but only {processed_count} were processed. This might indicate that not all pages of tracks were retrieved from Spotify."
             )
 
+        from deezspot.libutils.write_m3u import write_tracks_to_m3u
+        m3u_path = write_tracks_to_m3u(output_dir, playlist_obj.title, tracks)
+
         summary_obj = summaryObject(
             successful_tracks=successful_tracks_cb,
             skipped_tracks=skipped_tracks_cb,
@@ -879,13 +882,11 @@ class DeeLogin:
             total_skipped=len(skipped_tracks_cb),
             total_failed=len(failed_tracks_cb)
         )
-        
+        # Include m3u path in summary and callback
+        summary_obj.m3u_path = m3u_path
         status_obj_done = doneObject(ids=playlist_obj.ids, summary=summary_obj)
         callback_obj_done = playlistCallbackObject(playlist=playlist_obj, status_info=status_obj_done)
         report_progress(reporter=self.progress_reporter, callback_obj=callback_obj_done)
-
-        from deezspot.libutils.write_m3u import write_tracks_to_m3u
-        m3u_path = write_tracks_to_m3u(output_dir, playlist_obj.title, tracks)
 
         if make_zip:
             zip_name = f"{output_dir}/playlist_{sanitize_name(playlist_obj.title)}.zip"

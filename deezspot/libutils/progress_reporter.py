@@ -236,7 +236,10 @@ def report_track_done(
     summary: Optional[summaryObject] = None,
     parent_obj: Optional[Any] = None,
     current_track: Optional[int] = None,
-    total_tracks: Optional[int] = None
+    total_tracks: Optional[int] = None,
+    *,
+    final_path: Optional[str] = None,
+    download_quality: Optional[str] = None
 ) -> None:
     """
     Report track completion status.
@@ -248,12 +251,16 @@ def report_track_done(
         parent_obj: Parent object (album/playlist) if applicable
         current_track: Current track number for progress
         total_tracks: Total tracks for progress
+        final_path: Final filesystem path of the produced file
+        download_quality: String label of the used download quality (e.g., OGG_160, OGG_320 or FLAC/MP3_320)
     """
     status_obj = doneObject(
         ids=getattr(track_obj, 'ids', None),
         summary=summary,
         convert_to=getattr(preferences, 'convert_to', None),
-        bitrate=getattr(preferences, 'bitrate', None)
+        bitrate=getattr(preferences, 'bitrate', None),
+        final_path=final_path,
+        download_quality=download_quality
     )
     
     callback_obj = trackCallbackObject(
@@ -315,14 +322,17 @@ def report_playlist_initializing(playlist_obj: Any) -> None:
         report_progress(reporter=reporter, callback_obj=callback_obj)
 
 
-def report_playlist_done(playlist_obj: Any, summary: summaryObject) -> None:
+def report_playlist_done(playlist_obj: Any, summary: summaryObject, *, m3u_path: Optional[str] = None) -> None:
     """
     Report playlist completion status.
     
     Args:
         playlist_obj: Playlist object that completed
         summary: Summary of track download results
+        m3u_path: Final path of the generated m3u file, if any
     """
+    if m3u_path:
+        summary.m3u_path = m3u_path
     status_obj = doneObject(ids=getattr(playlist_obj, 'ids', None), summary=summary)
     callback_obj = playlistCallbackObject(playlist=playlist_obj, status_info=status_obj)
     
@@ -363,7 +373,16 @@ def report_track_status(
     elif status_type == 'error':
         report_track_error(track_obj, kwargs.get('error', 'Unknown'), preferences, parent_obj, current_track, total_tracks)
     elif status_type == 'done':
-        report_track_done(track_obj, preferences, kwargs.get('summary'), parent_obj, current_track, total_tracks)
+        report_track_done(
+            track_obj,
+            preferences,
+            kwargs.get('summary'),
+            parent_obj,
+            current_track,
+            total_tracks,
+            final_path=kwargs.get('final_path'),
+            download_quality=kwargs.get('download_quality')
+        )
     elif status_type == 'realtime':
         report_track_realtime_progress(track_obj, kwargs.get('time_elapsed', 0), kwargs.get('progress', 0),
                                      preferences, parent_obj, current_track, total_tracks) 

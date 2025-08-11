@@ -70,6 +70,10 @@ class summaryObject:
     total_successful: int = 0
     total_skipped: int = 0
     total_failed: int = 0
+    # Extended info
+    m3u_path: Optional[str] = None
+    final_path: Optional[str] = None
+    download_quality: Optional[str] = None
 
 
 @dataclass
@@ -77,6 +81,9 @@ class doneObject(BaseStatusObject):
     """Status object for 'done' state."""
     status: str = "done"
     summary: Optional[summaryObject] = None
+    # Extended info for final artifact
+    final_path: Optional[str] = None
+    download_quality: Optional[str] = None
 
 
 @dataclass

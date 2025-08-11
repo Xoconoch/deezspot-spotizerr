@@ -566,13 +566,17 @@ Indicates that the track has been processed successfully.
       "spotify": "4u7EnebtmKWzANvK9IClu8"
     },
     "convert_to": "flac",
-    "bitrate": "1411"
+    "bitrate": "1411",
+    "final_path": "/music/Queen/A Night at the Opera/07. Bohemian Rhapsody.flac",
+    "download_quality": "OGG_320"
   },
   "current_track": 1,
   "total_tracks": 1,
   "parent": null
 }
 ```
+
+Note: When a single-track operation is performed (not part of an album/playlist), the `summary` field may be populated. In that case, it can also include `final_path` and `download_quality` as additional convenience fields mirroring `status_info`.
 
 ## `albumCallbackObject` Examples
 
@@ -882,7 +886,8 @@ The `done` status for a playlist includes a summary of all track operations.
       ],
       "total_successful": 1,
       "total_skipped": 0,
-      "total_failed": 1
+      "total_failed": 1,
+      "m3u_path": "/playlists/Classic Rock Anthems.m3u"
     },
     "ids": {
       "spotify": "37i9dQZF1DX1rVvRgjX59F"
