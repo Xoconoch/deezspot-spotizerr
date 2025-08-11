@@ -13,6 +13,8 @@ from requests import (
     post as req_post,
 )
 from deezspot.libutils.logging_utils import logger
+import re
+from urllib.parse import urlparse, urlunparse
 
 class API_GW:
 
@@ -271,28 +273,39 @@ class API_GW:
         if song_link and 'spreaker.com' in song_link:
             return req_get(song_link, stream=True)
         
-        crypted_audio = req_get(song_link)
-
-        if len(crypted_audio.content) == 0:
-            raise TrackNotFound
-
-        return crypted_audio
+        try:
+            crypted_audio = req_get(song_link, stream=True, timeout=15)
+            if len(crypted_audio.content) == 0:
+                raise TrackNotFound
+            return crypted_audio
+        except Exception as e:
+            # DNS fallback across dzcdn proxy hosts (e-cdns-proxy-0..7)
+            try:
+                parsed = urlparse(song_link)
+                host = parsed.netloc
+                if re.search(r"e-cdns-proxy-\d+\.dzcdn\.net", host):
+                    m = re.search(r"e-cdns-proxy-(\d+)\.dzcdn\.net", host)
+                    original_idx = int(m.group(1)) if m else -1
+                    for i in range(0, 8):
+                        if i == original_idx:
+                            continue
+                        new_host = re.sub(r"e-cdns-proxy-\d+\.dzcdn\.net", f"e-cdns-proxy-{i}.dzcdn.net", host)
+                        new_url = urlunparse((parsed.scheme, new_host, parsed.path, parsed.params, parsed.query, parsed.fragment))
+                        try:
+                            alt_resp = req_get(new_url, stream=True, timeout=15)
+                            if len(alt_resp.content) == 0:
+                                continue
+                            return alt_resp
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+            # If all fallbacks failed, re-raise as TrackNotFound/Connection error
+            raise
 
     @classmethod
     def get_medias_url(cls, tracks_token, quality):
-        others_qualities = []
-
-        for c_quality in qualities:
-            if c_quality == quality:
-                continue
-
-            c_quality_set = {
-                "cipher": "BF_CBC_STRIPE",
-                "format": c_quality
-            }
-
-            others_qualities.append(c_quality_set)
-
+        # Only request the specific desired quality to avoid unexpected fallbacks
         json_data = {
             "license_token": cls.__license_token,
             "media": [
@@ -303,7 +316,7 @@ class API_GW:
                             "cipher": "BF_CBC_STRIPE",
                             "format": quality
                         }
-                    ] + others_qualities
+                    ]
                 }
             ],
             "track_tokens": tracks_token

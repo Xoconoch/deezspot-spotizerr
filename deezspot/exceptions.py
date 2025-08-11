@@ -38,7 +38,7 @@ class QualityNotFound(Exception):
 		if not msg:
 			self.msg = (
 				f"The {quality} quality doesn't exist :)\
-				\nThe qualities have to be FLAC or MP3_320 or MP3_256 or MP3_128"
+				\nThe qualities have to be FLAC, MP3_320 or MP3_128"
 			)
 		else:
 			self.msg = msg

@@ -187,15 +187,15 @@ class Download_JOB:
                 # Post-process each returned media in the chunk
                 for idx in range(len(chunk_medias)):
                     if "errors" in chunk_medias[idx]:
-                        c_media_json = cls.__get_url(non_episode_tracks[len(non_episode_medias) + idx], quality_download)
-                        chunk_medias[idx] = c_media_json
+                        # Do not fallback to legacy URL; mark as unavailable for this quality
+                        chunk_medias[idx] = {"media": []}
                     else:
                         if not chunk_medias[idx]['media']:
-                            c_media_json = cls.__get_url(non_episode_tracks[len(non_episode_medias) + idx], quality_download)
-                            chunk_medias[idx] = c_media_json
+                            # Do not fallback to legacy URL; mark as unavailable
+                            chunk_medias[idx] = {"media": []}
                         elif len(chunk_medias[idx]['media'][0]['sources']) == 1:
-                            c_media_json = cls.__get_url(non_episode_tracks[len(non_episode_medias) + idx], quality_download)
-                            chunk_medias[idx] = c_media_json
+                            # Keep single-source media as-is; do not fallback
+                            pass
                 non_episode_medias.extend(chunk_medias)
             except NoRightOnMedia:
                 for c_track in tokens_chunk:
@@ -585,7 +585,9 @@ class EASY_DW:
             if filesize == 0:
                 song = self.__song_metadata['music']
                 artist = self.__song_metadata['artist']
-                # Switch quality settings to MP3_320.
+                if not self.__recursive_quality:
+                    raise QualityNotFound(f"FLAC not available for {song} - {artist} and recursive quality search is disabled.")
+                # Fallback to MP3_320 if recursive_quality is enabled
                 self.__quality_download = 'MP3_320'
                 self.__file_format = '.mp3'
                 self.__song_path = self.__song_path.rsplit('.', 1)[0] + '.mp3'
@@ -598,51 +600,97 @@ class EASY_DW:
         # Continue with the normal download process.
         try:
             media_list = self.__infos_dw['media_url']['media']
-            song_link = media_list[0]['sources'][0]['url']
 
-            try:
-                crypted_audio = API_GW.song_exist(song_link)
-            except TrackNotFound:
+            # Try all sources for the requested quality before attempting any fallback
+            crypted_audio = None
+            last_error = None
+            for media_entry in media_list:
+                sources = media_entry.get('sources') or []
+                for src in sources:
+                    song_link = src.get('url')
+                    if not song_link:
+                        continue
+                    try:
+                        crypted_audio = API_GW.song_exist(song_link)
+                        if crypted_audio:
+                            last_error = None
+                            break
+                    except Exception as e_try_src:
+                        last_error = e_try_src
+                        continue
+                if crypted_audio:
+                    break
+
+            if not crypted_audio:
                 song = self.__song_metadata['music']
                 artist = self.__song_metadata['artist']
 
                 if self.__file_format == '.flac':
+                    if not self.__recursive_quality:
+                        raise QualityNotFound(f"FLAC not available for {song} - {artist} and recursive quality search is disabled.")
                     logger.warning(f"\n⚠ {song} - {artist} is not available in FLAC format. Trying MP3...")
                     self.__quality_download = 'MP3_320'
                     self.__file_format = '.mp3'
                     self.__song_path = self.__song_path.rsplit('.', 1)[0] + '.mp3'
 
-                    media = Download_JOB.check_sources(
-                        [self.__infos_dw], 'MP3_320'
-                    )
+                    media = Download_JOB.check_sources([self.__infos_dw], 'MP3_320')
                     if media:
                         self.__infos_dw['media_url'] = media[0]
-                        song_link = media[0]['media'][0]['sources'][0]['url']
-                        crypted_audio = API_GW.song_exist(song_link)
+                        media_list = self.__infos_dw['media_url']['media']
+                        # Try all sources for fallback quality
+                        for media_entry in media_list:
+                            sources = media_entry.get('sources') or []
+                            for src in sources:
+                                song_link = src.get('url')
+                                if not song_link:
+                                    continue
+                                try:
+                                    crypted_audio = API_GW.song_exist(song_link)
+                                    if crypted_audio:
+                                        last_error = None
+                                        break
+                                except Exception as e_try_src2:
+                                    last_error = e_try_src2
+                                    continue
+                            if crypted_audio:
+                                break
+                        if not crypted_audio:
+                            raise TrackNotFound(f"Track {song} - {artist} not available in MP3 after FLAC attempt failed (all sources unreachable). Last error: {last_error}")
                     else:
                         raise TrackNotFound(f"Track {song} - {artist} not available in MP3 after FLAC attempt failed (media not found for MP3).")
                 else:
                     if not self.__recursive_quality:
-                        # msg was not defined, provide a more specific message
                         raise QualityNotFound(f"Quality {self.__quality_download} not found for {song} - {artist} and recursive quality search is disabled.")
                     for c_quality in qualities:
                         if self.__quality_download == c_quality:
                             continue
-                        media = Download_JOB.check_sources(
-                            [self.__infos_dw], c_quality
-                        )
+                        media = Download_JOB.check_sources([self.__infos_dw], c_quality)
                         if media:
                             self.__infos_dw['media_url'] = media[0]
-                            song_link = media[0]['media'][0]['sources'][0]['url']
-                            try:
-                                crypted_audio = API_GW.song_exist(song_link)
-                                self.__c_quality = qualities[c_quality]
-                                self.__set_quality()
-                                break
-                            except TrackNotFound:
-                                if c_quality == "MP3_128":
-                                    raise TrackNotFound(f"Error with {song} - {artist}. All available qualities failed, last attempt was {c_quality}. Link: {self.__link}")
-                                continue
+                            media_list = self.__infos_dw['media_url']['media']
+                            # Try all sources for alternative quality
+                            for media_entry in media_list:
+                                sources = media_entry.get('sources') or []
+                                for src in sources:
+                                    song_link = src.get('url')
+                                    if not song_link:
+                                        continue
+                                    try:
+                                        crypted_audio = API_GW.song_exist(song_link)
+                                        if crypted_audio:
+                                            self.__c_quality = qualities[c_quality]
+                                            self.__set_quality()
+                                            last_error = None
+                                            break
+                                    except Exception as e_try_src3:
+                                        last_error = e_try_src3
+                                        continue
+                                if crypted_audio:
+                                    break
+                        if crypted_audio:
+                            break
+                    if not crypted_audio:
+                        raise TrackNotFound(f"Error with {song} - {artist}. All available qualities failed. Last error: {last_error}. Link: {self.__link}")
 
             c_crypted_audio = crypted_audio.iter_content(2048)
             
