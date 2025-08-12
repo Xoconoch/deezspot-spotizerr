@@ -44,7 +44,7 @@ from deezspot.libutils.progress_reporter import (
     report_album_initializing, report_album_done, report_playlist_initializing, report_playlist_done
 )
 from deezspot.libutils.taggers import (
-    enhance_metadata_with_image, add_deezer_enhanced_metadata, process_and_tag_track,
+    enhance_metadata_with_image, add_deezer_enhanced_metadata, add_spotify_enhanced_metadata, process_and_tag_track,
     save_cover_image_for_track
 )
 from mutagen.flac import FLAC
@@ -264,10 +264,16 @@ class EASY_DW:
         else:
             # Get the track object from preferences
             self.__track_obj: trackCbObject = preferences.song_metadata
+            # If spotify metadata flag is set and a spotify track object is provided, prefer it for tagging
+            if getattr(preferences, 'spotify_metadata', False) and getattr(preferences, 'spotify_track_obj', None):
+                self.__track_obj = preferences.spotify_track_obj
             
             # Convert it to the dictionary format needed for legacy functions
             artist_separator = getattr(preferences, 'artist_separator', '; ')
-            self.__song_metadata_dict = track_object_to_dict(self.__track_obj, source_type='deezer', artist_separator=artist_separator)
+            # Auto-select source type based on preference
+            use_spotify = getattr(preferences, 'spotify_metadata', False)
+            source_type = 'spotify' if use_spotify else 'deezer'
+            self.__song_metadata_dict = track_object_to_dict(self.__track_obj, source_type=source_type, artist_separator=artist_separator)
             # Maintain legacy attribute expected elsewhere
             self.__song_metadata = self.__song_metadata_dict
             self.__download_type = "track"
@@ -283,7 +289,7 @@ class EASY_DW:
         current_track_val = None
         total_tracks_val = None
 
-        if self.__parent == "playlist" and hasattr(self.__preferences, "json_data"):
+        if self.__parent == "playlist" and hasattr(self.__preferences, "json_data") and self.__preferences.json_data:
             playlist_data = self.__preferences.json_data
             
             if isinstance(playlist_data, dict):
@@ -307,7 +313,7 @@ class EASY_DW:
             total_tracks_val = getattr(self.__preferences, 'total_tracks', 0)
             current_track_val = getattr(self.__preferences, 'track_number', 0)
 
-        elif self.__parent == "album" and hasattr(self.__preferences, "json_data"):
+        elif self.__parent == "album" and hasattr(self.__preferences, "json_data") and self.__preferences.json_data:
             album_data = self.__preferences.json_data
             album_id = album_data.ids.deezer
             parent_obj = albumCbObject(
@@ -400,11 +406,18 @@ class EASY_DW:
 
     def easy_dw(self) -> Track:
         # Get image URL and enhance metadata
+        pic = None
         if self.__infos_dw.get('__TYPE__') == 'episode':
             pic = self.__infos_dw.get('EPISODE_IMAGE_MD5', '')
+            image = API.choose_img(pic)
         else:
-            pic = self.__infos_dw['ALB_PICTURE']
-        image = API.choose_img(pic)
+            # If using Spotify metadata, prefer the best Spotify image URL from the track object
+            if getattr(self.__preferences, 'spotify_metadata', False) and hasattr(self.__track_obj, 'album') and getattr(self.__track_obj.album, 'images', None):
+                from deezspot.libutils.metadata_converter import _get_best_image_url
+                image = _get_best_image_url(self.__track_obj.album.images, 'spotify')
+            else:
+                pic = self.__infos_dw['ALB_PICTURE']
+                image = API.choose_img(pic)
         self.__song_metadata['image'] = image
         
         # Process image data using unified utility
@@ -567,21 +580,30 @@ class EASY_DW:
 
                 # If we reach here, the item should be successful and not skipped.
         if current_item.success:
-            if self.__infos_dw.get('__TYPE__') != 'episode': # Assuming pic is for tracks
+            if self.__infos_dw.get('__TYPE__') != 'episode' and pic: # Assuming pic is for tracks
                 current_item.md5_image = pic # Set md5_image for tracks
-            # Apply tags using unified utility with Deezer enhancements
+            # Apply tags using unified utility with Deezer or Spotify enhancements
             from deezspot.deezloader.deegw_api import API_GW
-            enhanced_metadata = add_deezer_enhanced_metadata(
-                self.__song_metadata,
-                self.__infos_dw,
-                self.__ids,
-                API_GW
-            )
-            process_and_tag_track(
-                track=current_item,
-                metadata_dict=enhanced_metadata,
-                source_type='deezer'
-            )
+            use_spotify = getattr(self.__preferences, 'spotify_metadata', False)
+            if use_spotify:
+                enhanced_metadata = add_spotify_enhanced_metadata(self.__song_metadata, self.__track_obj)
+                process_and_tag_track(
+                    track=current_item,
+                    metadata_dict=enhanced_metadata,
+                    source_type='spotify'
+                )
+            else:
+                enhanced_metadata = add_deezer_enhanced_metadata(
+                    self.__song_metadata,
+                    self.__infos_dw,
+                    self.__ids,
+                    API_GW
+                )
+                process_and_tag_track(
+                    track=current_item,
+                    metadata_dict=enhanced_metadata,
+                    source_type='deezer'
+                )
         
         return current_item
 
@@ -763,20 +785,31 @@ class EASY_DW:
 
                 # Add Deezer-specific enhanced metadata and apply tags
                 from deezspot.deezloader.deegw_api import API_GW
-                enhanced_metadata = add_deezer_enhanced_metadata(
-                    self.__song_metadata,
-                    self.__infos_dw,
-                    self.__ids,
-                    API_GW
-                )
-                
-                # Apply tags using unified utility
-                process_and_tag_track(
-                    track=self.__c_track,
-                    metadata_dict=enhanced_metadata,
-                    source_type='deezer',
-                    save_cover=getattr(self.__preferences, 'save_cover', False)
-                )
+                # Build metadata: if using Spotify metadata, enhance for Spotify; else Deezer
+                use_spotify = getattr(self.__preferences, 'spotify_metadata', False)
+                if use_spotify:
+                    enhanced_metadata = add_spotify_enhanced_metadata(self.__song_metadata, self.__track_obj)
+                    process_and_tag_track(
+                        track=self.__c_track,
+                        metadata_dict=enhanced_metadata,
+                        source_type='spotify',
+                        save_cover=getattr(self.__preferences, 'save_cover', False)
+                    )
+                else:
+                    enhanced_metadata = add_deezer_enhanced_metadata(
+                        self.__song_metadata,
+                        self.__infos_dw,
+                        self.__ids,
+                        API_GW
+                    )
+                    
+                    # Apply tags using unified utility
+                    process_and_tag_track(
+                        track=self.__c_track,
+                        metadata_dict=enhanced_metadata,
+                        source_type='deezer',
+                        save_cover=getattr(self.__preferences, 'save_cover', False)
+                    )
 
                 if self.__convert_to:
                     format_name, bitrate = self._parse_format_string(self.__convert_to)
@@ -800,19 +833,28 @@ class EASY_DW:
                             logger.error(f"Audio conversion error: {str(conv_error)}. Proceeding with original format.")
                             register_active_download(path_before_conversion)
 
-                # Apply tags using unified utility with Deezer enhancements
+                # Apply tags using unified utility with Deezer or Spotify enhancements
                 from deezspot.deezloader.deegw_api import API_GW
-                enhanced_metadata = add_deezer_enhanced_metadata(
-                    self.__song_metadata,
-                    self.__infos_dw,
-                    self.__ids,
-                    API_GW
-                )
-                process_and_tag_track(
-                    track=self.__c_track,
-                    metadata_dict=enhanced_metadata,
-                    source_type='deezer'
-                )
+                use_spotify = getattr(self.__preferences, 'spotify_metadata', False)
+                if use_spotify:
+                    enhanced_metadata = add_spotify_enhanced_metadata(self.__song_metadata, self.__track_obj)
+                    process_and_tag_track(
+                        track=self.__c_track,
+                        metadata_dict=enhanced_metadata,
+                        source_type='spotify'
+                    )
+                else:
+                    enhanced_metadata = add_deezer_enhanced_metadata(
+                        self.__song_metadata,
+                        self.__infos_dw,
+                        self.__ids,
+                        API_GW
+                    )
+                    process_and_tag_track(
+                        track=self.__c_track,
+                        metadata_dict=enhanced_metadata,
+                        source_type='deezer'
+                    )
                 self.__c_track.success = True
                 unregister_active_download(self.__song_path)
 

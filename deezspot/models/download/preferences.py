@@ -23,3 +23,7 @@ class Preferences:
         self.save_cover: bool = False # Option to save a cover.jpg image
         # New: artist separator for joining multiple artists or album artists
         self.artist_separator: str = "; "
+        # New: when True, use Spotify metadata for tagging in spo flows
+        self.spotify_metadata: bool = False
+        # New: optional Spotify trackObject to use when spotify_metadata is True
+        self.spotify_track_obj = None
