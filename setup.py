@@ -27,6 +27,6 @@ setup(
                 "fastapi==0.116.1",
                 "uvicorn[standard]==0.35.0",
                 "spotipy-anon==1.5.2",
-                "librespot-spotizerr==0.2.10"
+                "librespot-spotizerr==0.3.0"
          ],
 )
