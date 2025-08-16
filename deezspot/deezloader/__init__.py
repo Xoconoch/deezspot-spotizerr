@@ -72,6 +72,11 @@ def _sim(a: str, b: str) -> float:
         return 0.0
     return SequenceMatcher(None, a, b).ratio()
 
+# Clean for searching on Deezer
+def _remove_parentheses(string: str) -> str:
+    # remove () and [] and {}, as well as anything inside
+    return re.sub(r'\{[^)]*\}', '', re.sub(r'\[[^)]*\]', '', re.sub(r'\([^)]*\)', '', string)))
+
 API()
 
 # Create a logger for the deezspot library
@@ -445,7 +450,15 @@ class DeeLogin:
             candidates = []
         
         for cand in candidates:
-            if max(_sim(spo_title, cand.get('title', '')), _sim(spo_title, cand.get('title_short', ''))) < 0.90:
+            title_match_1 = max(
+                _sim(spo_title, dz_json.get('title', '')),
+                _sim(spo_title, dz_json.get('title_short', ''))
+            )
+            title_match_2 = max(
+                _sim(_remove_parentheses(spo_title), _remove_parentheses(dz_json.get('title', ''))),
+                _sim(_remove_parentheses(spo_title), _remove_parentheses(dz_json.get('title_short', '')))
+            )
+            if max(title_match_1, title_match_2) < 0.90:
                 continue
             c_id = cand.get('id')
             if not c_id:
