@@ -154,7 +154,7 @@ class EASY_DW:
                 if not playlist_name and hasattr(playlist_data, 'title'):
                     playlist_name = getattr(playlist_data, 'title')
                 self.__song_metadata_dict['playlist'] = playlist_name or 'unknown'
-                self.__song_metadata_dict['playlist_num'] = getattr(self.__preferences, 'track_number', None) or 0
+                self.__song_metadata_dict['playlistnum'] = getattr(self.__preferences, 'track_number', None) or 0
         except Exception:
             # If playlist info missing, skip silently
             pass

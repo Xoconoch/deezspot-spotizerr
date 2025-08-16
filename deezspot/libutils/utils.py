@@ -194,7 +194,7 @@ def apply_custom_format(format_str, metadata: dict, pad_tracks=True) -> str:
                 # Fallback for string-based dates like "YYYY-MM-DD" or just "YYYY"
                 return str(value).split('-')[0]
 
-            if pad_tracks and full_key in ['tracknum', 'discnum', 'playlist_num']:
+            if pad_tracks and full_key in ['tracknum', 'discnum', 'playlistnum']:
                 str_value = str(value)
                 # Pad with leading zero if it's a single digit
                 if str_value.isdigit() and len(str_value) == 1:

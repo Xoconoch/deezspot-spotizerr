@@ -184,7 +184,7 @@ You can customize the directory structure and track filenames using `custom_dir_
 *   `%episodetitle%` (for episodes)
 *   `%podcastgenre%` (for episodes)
 *   `%playlist%` (for playlist downloads: playlist name)
-*   `%playlist_num%` (for playlist downloads: 1-based index of the track within the playlist; respects `pad_tracks`)
+*   `%playlistnum%` (for playlist downloads: 1-based index of the track within the playlist; respects `pad_tracks`)
 
 **Example:**
 

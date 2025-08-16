@@ -368,7 +368,7 @@ class EASY_DW:
                     playlist_name = getattr(playlist_data, 'title', 'unknown')
                 self.__song_metadata_dict['playlist'] = playlist_name
                 # 1-based index already stored in preferences during iteration
-                self.__song_metadata_dict['playlist_num'] = getattr(self.__preferences, 'track_number', None) or 0
+                self.__song_metadata_dict['playlistnum'] = getattr(self.__preferences, 'track_number', None) or 0
         except Exception:
             # Non-fatal if playlist metadata is not available
             pass
