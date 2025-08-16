@@ -2,6 +2,7 @@
 import os
 import json
 import logging
+import re
 from deezspot.deezloader.dee_api import API
 from deezspot.easy_spoty import Spo
 from deezspot.deezloader.deegw_api import API_GW
@@ -437,7 +438,12 @@ class DeeLogin:
                     _sim(spo_title, dz_json.get('title_short', '')),
                 )
                 album_match = _sim(spo_album_title, (dz_json.get('album') or {}).get('title', ''))
-                if title_match >= 0.90 and album_match >= 0.90 and tn == spo_tracknum:
+                t_isrc = (dz_json.get('isrc') or '').upper()
+                # Enforce ISRC match strictly in ISRC lookup path
+                if (
+                    t_isrc and spo_isrc and t_isrc == spo_isrc and
+                    title_match >= 0.90 and album_match >= 0.90 and tn == spo_tracknum
+                ):
                     return f"https://www.deezer.com/track/{dz_json.get('id')}"
         except Exception:
             pass
@@ -472,7 +478,8 @@ class DeeLogin:
             if tn != spo_tracknum:
                 continue
             t_isrc = (dzc.get('isrc') or '').upper()
-            if spo_isrc and t_isrc and t_isrc != spo_isrc:
+            # Enforce ISRC strictly in fallback path as well: require present and equal
+            if not spo_isrc or not t_isrc or t_isrc != spo_isrc:
                 continue
             return f"https://www.deezer.com/track/{c_id}"
         
