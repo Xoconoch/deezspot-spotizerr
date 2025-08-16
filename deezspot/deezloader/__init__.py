@@ -419,7 +419,9 @@ class DeeLogin:
         spo_title = track_json.get('name', '')
         spo_album_title = (track_json.get('album') or {}).get('name', '')
         spo_tracknum = int(track_json.get('track_number') or 0)
-        
+        spo_artists = track_json.get('artists') or []
+        spo_main_artist = (spo_artists[0].get('name') if spo_artists else '') or ''
+
         try:
             dz = API.get_track_json(f"isrc:{spo_isrc}")
             if dz and dz.get('id'):
@@ -435,8 +437,8 @@ class DeeLogin:
         except Exception:
             pass
         
-        # Fallback: search by title + album
-        query = f'"{spo_title} {spo_album_title}"'
+        # Fallback: search by title + artist + album
+        query = f'"track:\'{spo_title}\' artist:\'{spo_main_artist}\' album:\'{spo_album_title}\'"'
         try:
             candidates = API.search_tracks_raw(query, limit=5)
         except Exception:
