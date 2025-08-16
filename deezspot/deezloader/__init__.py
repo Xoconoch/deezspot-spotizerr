@@ -72,6 +72,11 @@ def _sim(a: str, b: str) -> float:
         return 0.0
     return SequenceMatcher(None, a, b).ratio()
 
+# Clean for searching on Deezer
+def _remove_parentheses(string: str) -> str:
+    # remove () and [] and {}, as well as anything inside
+    return re.sub(r'\{[^)]*\}', '', re.sub(r'\[[^)]*\]', '', re.sub(r'\([^)]*\)', '', string)))
+
 API()
 
 # Create a logger for the deezspot library
@@ -419,7 +424,9 @@ class DeeLogin:
         spo_title = track_json.get('name', '')
         spo_album_title = (track_json.get('album') or {}).get('name', '')
         spo_tracknum = int(track_json.get('track_number') or 0)
-        
+        spo_artists = track_json.get('artists') or []
+        spo_main_artist = (spo_artists[0].get('name') if spo_artists else '') or ''
+
         try:
             dz = API.get_track_json(f"isrc:{spo_isrc}")
             if dz and dz.get('id'):
@@ -435,15 +442,23 @@ class DeeLogin:
         except Exception:
             pass
         
-        # Fallback: search by title + album
-        query = f'"{spo_title} {spo_album_title}"'
+        # Fallback: search by title + artist + album
+        query = f'"track:\'{spo_title}\' artist:\'{spo_main_artist}\' album:\'{spo_album_title}\'"'
         try:
             candidates = API.search_tracks_raw(query, limit=5)
         except Exception:
             candidates = []
         
         for cand in candidates:
-            if max(_sim(spo_title, cand.get('title', '')), _sim(spo_title, cand.get('title_short', ''))) < 0.90:
+            title_match_1 = max(
+                _sim(spo_title, dz_json.get('title', '')),
+                _sim(spo_title, dz_json.get('title_short', ''))
+            )
+            title_match_2 = max(
+                _sim(_remove_parentheses(spo_title), _remove_parentheses(dz_json.get('title', ''))),
+                _sim(_remove_parentheses(spo_title), _remove_parentheses(dz_json.get('title_short', '')))
+            )
+            if max(title_match_1, title_match_2) < 0.90:
                 continue
             c_id = cand.get('id')
             if not c_id:
