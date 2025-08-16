@@ -144,6 +144,20 @@ class EASY_DW:
         pad_tracks = getattr(self.__preferences, 'pad_tracks', True)
         # Ensure the separator is available to formatting utils for indexed placeholders
         self.__song_metadata_dict['artist_separator'] = getattr(self.__preferences, 'artist_separator', '; ')
+        # Inject playlist placeholders if in playlist context
+        try:
+            if self.__parent == 'playlist' and hasattr(self.__preferences, 'json_data') and self.__preferences.json_data:
+                playlist_data = self.__preferences.json_data
+                playlist_name = None
+                if isinstance(playlist_data, dict):
+                    playlist_name = playlist_data.get('name') or playlist_data.get('title')
+                if not playlist_name and hasattr(playlist_data, 'title'):
+                    playlist_name = getattr(playlist_data, 'title')
+                self.__song_metadata_dict['playlist'] = playlist_name or 'unknown'
+                self.__song_metadata_dict['playlist_num'] = getattr(self.__preferences, 'track_number', None) or 0
+        except Exception:
+            # If playlist info missing, skip silently
+            pass
         self.__song_path = set_path(
             self.__song_metadata_dict,
             self.__output_dir,

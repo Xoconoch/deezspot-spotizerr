@@ -356,6 +356,22 @@ class EASY_DW:
         custom_track_format = getattr(self.__preferences, 'custom_track_format', None)
         pad_tracks = getattr(self.__preferences, 'pad_tracks', True)
         self.__song_metadata_dict['artist_separator'] = getattr(self.__preferences, 'artist_separator', '; ')
+        # Inject playlist placeholders if in playlist context
+        try:
+            if self.__parent == 'playlist' and hasattr(self.__preferences, 'json_data') and self.__preferences.json_data:
+                playlist_data = self.__preferences.json_data
+                # Support both Deezer playlistObject and raw dict (Spotify metadata case)
+                if isinstance(playlist_data, dict):
+                    playlist_name = playlist_data.get('name') or playlist_data.get('title') or 'unknown'
+                else:
+                    # playlistObject has 'title'
+                    playlist_name = getattr(playlist_data, 'title', 'unknown')
+                self.__song_metadata_dict['playlist'] = playlist_name
+                # 1-based index already stored in preferences during iteration
+                self.__song_metadata_dict['playlist_num'] = getattr(self.__preferences, 'track_number', None) or 0
+        except Exception:
+            # Non-fatal if playlist metadata is not available
+            pass
         self.__song_path = set_path(
             self.__song_metadata_dict,
             self.__output_dir,
