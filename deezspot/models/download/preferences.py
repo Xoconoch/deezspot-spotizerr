@@ -27,3 +27,5 @@ class Preferences:
         self.spotify_metadata: bool = False
         # New: optional Spotify trackObject to use when spotify_metadata is True
         self.spotify_track_obj = None
+        # New: optional Spotify albumObject (from spotloader tracking_album) for album-level spotify_metadata
+        self.spotify_album_obj = None

@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 import os
 import json
 import requests
@@ -277,6 +276,32 @@ class EASY_DW:
             # Maintain legacy attribute expected elsewhere
             self.__song_metadata = self.__song_metadata_dict
             self.__download_type = "track"
+            # Backfill missing album fields when using Spotify minimal track objects
+            try:
+                if use_spotify and 'album' not in self.__song_metadata_dict and getattr(preferences, 'spotify_album_obj', None):
+                    spo_album = preferences.spotify_album_obj
+                    # Basic album fields
+                    self.__song_metadata_dict['album'] = getattr(spo_album, 'title', '')
+                    if getattr(spo_album, 'artists', None):
+                        self.__song_metadata_dict['ar_album'] = artist_separator.join([getattr(a, 'name', '') for a in spo_album.artists])
+                    self.__song_metadata_dict['nb_tracks'] = getattr(spo_album, 'total_tracks', 0)
+                    # Total discs if available
+                    if hasattr(spo_album, 'total_discs') and getattr(spo_album, 'total_discs'):
+                        self.__song_metadata_dict['nb_discs'] = getattr(spo_album, 'total_discs')
+                    # Year from release date
+                    from deezspot.libutils.metadata_converter import _format_release_date, _get_best_image_url
+                    self.__song_metadata_dict['year'] = _format_release_date(getattr(spo_album, 'release_date', None), 'spotify')
+                    # IDs
+                    if getattr(spo_album, 'ids', None):
+                        self.__song_metadata_dict['upc'] = getattr(spo_album.ids, 'upc', None)
+                        self.__song_metadata_dict['album_id'] = getattr(spo_album.ids, 'spotify', None)
+                    # Prefer Spotify album image
+                    if getattr(spo_album, 'images', None):
+                        img_url = _get_best_image_url(spo_album.images, 'spotify')
+                        if img_url:
+                            self.__song_metadata_dict['image'] = img_url
+            except Exception:
+                pass
 
         self.__c_quality = qualities[self.__quality_download]
         self.__fallback_ids = self.__ids
@@ -1120,6 +1145,9 @@ class DW_ALBUM:
         album_obj: albumCbObject = self.__preferences.song_metadata
         self.__song_metadata = self._album_object_to_dict(album_obj)
         self.__song_metadata['artist_separator'] = getattr(self.__preferences, 'artist_separator', '; ')
+        # New: Spotify metadata context for album-level tagging
+        self.__use_spotify = getattr(self.__preferences, 'spotify_metadata', False)
+        self.__spotify_album_obj = getattr(self.__preferences, 'spotify_album_obj', None)
 
     def dw(self) -> Album:
         from deezspot.deezloader.deegw_api import API_GW
@@ -1132,19 +1160,40 @@ class DW_ALBUM:
         md5_image = infos_dw[0]['ALB_PICTURE']
         image_bytes = API.choose_img(md5_image, size="1400x1400")
         
-        # Convert album object to dictionary for legacy functions
-        album_dict = self._album_object_to_dict(album_obj)
-        album_dict['image'] = image_bytes
-
+        # Choose album_dict source: Spotify if requested and available, else Deezer
+        artist_separator = getattr(self.__preferences, 'artist_separator', '; ')
+        if self.__use_spotify and self.__spotify_album_obj:
+            album_dict = album_object_to_dict(self.__spotify_album_obj, source_type='spotify', artist_separator=artist_separator)
+        else:
+            album_dict = self._album_object_to_dict(album_obj)
+        # Prefer Spotify image if requested and available
+        if self.__use_spotify and self.__spotify_album_obj and getattr(self.__spotify_album_obj, 'images', None):
+            from deezspot.libutils.metadata_converter import _get_best_image_url
+            spo_img_url = _get_best_image_url(self.__spotify_album_obj.images, 'spotify')
+            if spo_img_url:
+                album_dict['image'] = spo_img_url
+            else:
+                album_dict['image'] = image_bytes
+        else:
+            album_dict['image'] = image_bytes
+        
         album = Album(self.__ids)
-        album.image = image_bytes
+        # album.image should be raw bytes; fetch URL if needed
+        if isinstance(album_dict['image'], bytes):
+            album.image = album_dict['image']
+        else:
+            try:
+                from deezspot.libutils.taggers import fetch_and_process_image
+                album.image = fetch_and_process_image(album_dict['image']) or API.choose_img(md5_image, size="1400x1400")
+            except Exception:
+                album.image = API.choose_img(md5_image, size="1400x1400")
         album.md5_image = md5_image
         album.nb_tracks = album_obj.total_tracks
         album.album_name = album_obj.title
         album.upc = album_obj.ids.upc
         album.tags = album_dict
         tracks = album.tracks
-
+        
         medias = Download_JOB.check_sources(infos_dw, self.__quality_download)
         
         album_base_directory = get_album_directory(
@@ -1159,6 +1208,20 @@ class DW_ALBUM:
             save_cover_image(album.image, album_base_directory, "cover.jpg")
             
         total_tracks = len(infos_dw)
+        # If spotify album metadata is requested and available, build a map of spotify track objects by ISRC or index
+        spotify_tracks_by_isrc = {}
+        spotify_tracks_in_order = []
+        if self.__use_spotify and self.__spotify_album_obj and getattr(self.__spotify_album_obj, 'tracks', None):
+            # The spotify album object contains trackAlbumObjects with ids (including isrc)
+            for spo_track in self.__spotify_album_obj.tracks:
+                spotify_tracks_in_order.append(spo_track)
+                try:
+                    isrc_val = getattr(spo_track.ids, 'isrc', None)
+                    if isrc_val:
+                        spotify_tracks_by_isrc[isrc_val.upper()] = spo_track
+                except Exception:
+                    pass
+        
         for a, album_track_obj in enumerate(album_obj.tracks):
             c_infos_dw_item = infos_dw[a] 
             
@@ -1197,6 +1260,25 @@ class DW_ALBUM:
                 c_preferences.track_number = a + 1  # For progress reporting only
                 c_preferences.total_tracks = total_tracks
                 c_preferences.link = f"https://deezer.com/track/{c_preferences.ids}"
+                # Inject Spotify per-track object if available without extra API calls
+                if self.__use_spotify and spotify_tracks_in_order:
+                    spo_track_for_tag = None
+                    # Prefer ISRC matching if possible
+                    deezer_isrc = None
+                    try:
+                        deezer_isrc = c_infos_dw_item.get('ISRC') or c_infos_dw_item.get('isrc')
+                        deezer_isrc = deezer_isrc.upper() if isinstance(deezer_isrc, str) else None
+                    except Exception:
+                        deezer_isrc = None
+                    if deezer_isrc and deezer_isrc in spotify_tracks_by_isrc:
+                        spo_track_for_tag = spotify_tracks_by_isrc[deezer_isrc]
+                    else:
+                        # Fallback to index position
+                        if a < len(spotify_tracks_in_order):
+                            spo_track_for_tag = spotify_tracks_in_order[a]
+                    if spo_track_for_tag:
+                        c_preferences.spotify_metadata = True
+                        c_preferences.spotify_track_obj = spo_track_for_tag
                 
                 current_track_object = EASY_DW(c_infos_dw_item, c_preferences, parent='album').easy_dw()
             except Exception as e:

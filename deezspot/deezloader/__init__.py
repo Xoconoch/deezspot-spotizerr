@@ -251,7 +251,9 @@ class DeeLogin:
         save_cover=stock_save_cover,
         market=stock_market,
         playlist_context=None,
-        artist_separator: str = "; "
+        artist_separator: str = "; ",
+        spotify_metadata: bool = False,
+        spotify_album_obj=None
     ) -> Album:
 
         link_is_valid(link_album)
@@ -299,6 +301,8 @@ class DeeLogin:
         preferences.save_cover = save_cover
         preferences.market = market
         preferences.artist_separator = artist_separator
+        preferences.spotify_metadata = bool(spotify_metadata)
+        preferences.spotify_album_obj = spotify_album_obj
 
         if playlist_context:
             preferences.json_data = playlist_context['json_data']
@@ -637,10 +641,23 @@ class DeeLogin:
         save_cover=stock_save_cover,
         market=stock_market,
         playlist_context=None,
-        artist_separator: str = "; "
+        artist_separator: str = "; ",
+        spotify_metadata: bool = False
     ) -> Album:
 
         link_dee = self.convert_spoty_to_dee_link_album(link_album)
+
+        spotify_album_obj = None
+        if spotify_metadata:
+            try:
+                # Fetch full Spotify album with tracks once and convert to albumObject
+                from deezspot.spotloader.__spo_api__ import tracking_album as spo_tracking_album
+                spo_ids = get_ids(link_album)
+                spotify_album_json = Spo.get_album(spo_ids)
+                if spotify_album_json:
+                    spotify_album_obj = spo_tracking_album(spotify_album_json)
+            except Exception:
+                spotify_album_obj = None
 
         album = self.download_albumdee(
             link_dee, output_dir,
@@ -658,7 +675,9 @@ class DeeLogin:
             save_cover=save_cover,
             market=market,
             playlist_context=playlist_context,
-            artist_separator=artist_separator
+            artist_separator=artist_separator,
+            spotify_metadata=spotify_metadata,
+            spotify_album_obj=spotify_album_obj
         )
 
         return album
